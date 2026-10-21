@@ -57,7 +57,7 @@
                     let statusLogs = [];
 
                     try {
-                        // 1. Cargar base de docentes
+                        // 1. Cargar base de docentes (se lee como Diccionario/Objetos)
                         const resDoc = await fetch('./docentes.xlsx');
                         if (resDoc.ok) {
                             const bufferDoc = await resDoc.arrayBuffer();
@@ -69,7 +69,7 @@
                             statusLogs.push(`❌ No se encontró docentes.xlsx`);
                         }
 
-                        // 2. Cargar y fusionar modalidades de alumnos
+                        // 2. Cargar modalidades de alumnos (se leen como Matrices/Grillas brutas para evitar errores de columnas)
                         const modalidades = ['diurno.xlsx', 'vespertino.xlsx', 'semipresencial.xlsx'];
                         
                         for (const file of modalidades) {
@@ -78,8 +78,9 @@
                                 if (res.ok) {
                                     const buffer = await res.arrayBuffer();
                                     const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-                                    const parsed = parseUplus(data);
+                                    // Usamos { header: 1 } para obtener un array de arrays puro, ignorando nombres de columnas
+                                    const rawData = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
+                                    const parsed = parseUplusRobust(rawData);
                                     allAlumnos = [...allAlumnos, ...parsed];
                                     statusLogs.push(`✅ ${file} cargado (${parsed.length} alumnos)`);
                                 } else {
@@ -103,30 +104,50 @@
                 loadAllData();
             }, []);
 
-            const parseUplus = (data) => {
+            // NUEVO PARSER ROBUSTO PARA EXCEL DE U+
+            const parseUplusRobust = (data) => {
                 let currentAlumno = null;
                 let parsedAlumnos = [];
                 
                 for (let i = 0; i < data.length; i++) {
-                    const row = data[i];
-                    const val3 = String(row['Data.Column3'] || '').trim();
+                    const row = data[i] || [];
                     
-                    if (val3 === 'CARGA ACADÉMICA DEFINITIVA' && data[i+1]) {
-                        const name = String(data[i+1]['Data.Column3'] || '').trim();
-                        const rut = String(data[i+2]['Data.Column3'] || '').trim();
-                        if (name) {
+                    // 1. Buscar en qué columna dice exactamente "CARGA ACADÉMICA DEFINITIVA"
+                    let targetCol = -1;
+                    for (let j = 0; j < row.length; j++) {
+                        if (String(row[j]).trim() === 'CARGA ACADÉMICA DEFINITIVA') {
+                            targetCol = j;
+                            break;
+                        }
+                    }
+                    
+                    // Si lo encuentra, los datos del alumno están en las 2 filas siguientes, misma columna
+                    if (targetCol !== -1 && data[i+1] && data[i+2]) {
+                        const name = String(data[i+1][targetCol] || '').trim();
+                        const rut = String(data[i+2][targetCol] || '').trim();
+                        if (name && name !== 'Nombre Ramo') {
                             currentAlumno = { nombre: name, rut: rut, asignaturas: [] };
                             parsedAlumnos.push(currentAlumno);
                         }
+                        continue; 
                     }
-                    if (currentAlumno && val3 && val3 !== 'Nombre Ramo' && val3 !== 'CARGA ACADÉMICA DEFINITIVA') {
-                        const sec = String(row['Data.Column5'] || '').trim();
-                        if (sec && !isNaN(parseInt(sec))) {
-                            currentAlumno.asignaturas.push({
-                                nombre: val3,
-                                seccion: sec,
-                                profesor: String(row['Data.Column7'] || '').trim()
-                            });
+
+                    // 2. Si ya encontramos al alumno, empezamos a leer sus asignaturas
+                    if (currentAlumno) {
+                        // En U+, la Asignatura suele estar en la columna C (índice 2), Sección en E (índice 4), Profe en G (índice 6)
+                        const ramo = String(row[2] || '').trim();
+                        const sec = String(row[4] || '').trim();
+                        const profe = String(row[6] || '').trim();
+
+                        if (ramo && ramo !== 'Nombre Ramo' && ramo !== 'CARGA ACADÉMICA DEFINITIVA') {
+                            // Validar que la sección sea un número para confirmar que es una asignatura real
+                            if (sec && !isNaN(parseInt(sec))) {
+                                currentAlumno.asignaturas.push({
+                                    nombre: ramo,
+                                    seccion: sec,
+                                    profesor: profe
+                                });
+                            }
                         }
                     }
                 }
@@ -205,17 +226,15 @@
                 <div className="max-w-4xl mx-auto p-6 mt-8">
                     <h1 className="text-3xl font-bold text-blue-800 mb-2 border-b-2 border-blue-500 pb-2">Notificador U+ Global</h1>
                     
-                    {/* Panel de estado de carga simplificado */}
                     <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
                         <strong className="text-gray-800">Estado de archivos:</strong>
                         {loadStatus.map((status, idx) => (
-                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>
+                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700 font-medium'}>
                                 {status}
                             </span>
                         ))}
                     </div>
 
-                    {/* Búsqueda Global */}
                     <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
                         <h2 className="text-xl font-semibold mb-4 text-gray-700">Buscar Estudiante ({alumnos.length} en total)</h2>
                         <div className="relative mb-6">
@@ -252,7 +271,6 @@
                         )}
                     </div>
 
-                    {/* Ficha del Alumno Seleccionado */}
                     {selectedAlumno && (
                         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
                             <h2 className="text-xl font-semibold mb-4 text-gray-800">Configurar Correo: <span className="text-blue-700">{selectedAlumno.nombre}</span></h2>
