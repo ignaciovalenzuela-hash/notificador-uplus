@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador U+ Multimodalidad</title>
+    <title>Notificador Inteligente U+</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -39,73 +39,69 @@
         };
 
         function App() {
-            const [modalidad, setModalidad] = useState('diurno');
             const [alumnos, setAlumnos] = useState([]);
             const [docentes, setDocentes] = useState([]);
             const [searchTerm, setSearchTerm] = useState('');
             const [selectedAlumno, setSelectedAlumno] = useState(null);
             
-            const [loadingAlumnos, setLoadingAlumnos] = useState(false);
-            const [loadingDocentes, setLoadingDocentes] = useState(false);
-            const [errorMsg, setErrorMsg] = useState('');
+            const [loading, setLoading] = useState(true);
+            const [loadStatus, setLoadStatus] = useState([]);
             
             const [motivo, setMotivo] = useState('extension');
             const [fechaLimite, setFechaLimite] = useState('');
 
-            // 1. Carga inicial de Correos de Docentes
             useEffect(() => {
-                const loadDocentes = async () => {
-                    setLoadingDocentes(true);
+                const loadAllData = async () => {
+                    setLoading(true);
+                    let allAlumnos = [];
+                    let statusLogs = [];
+
                     try {
+                        // 1. Cargar base de docentes
                         const resDoc = await fetch('./docentes.xlsx');
-                        if (!resDoc.ok) throw new Error("No se encontró docentes.xlsx en el repositorio.");
-                        const bufferDoc = await resDoc.arrayBuffer();
-                        const wbDoc = window.XLSX.read(bufferDoc, { type: 'array' });
-                        const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
-                        setDocentes(dataDoc);
-                        setErrorMsg('');
-                    } catch (err) {
-                        console.error(err);
-                        setErrorMsg(err.message);
-                    } finally {
-                        setLoadingDocentes(false);
-                    }
-                };
-                loadDocentes();
-            }, []);
+                        if (resDoc.ok) {
+                            const bufferDoc = await resDoc.arrayBuffer();
+                            const wbDoc = window.XLSX.read(bufferDoc, { type: 'array' });
+                            const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
+                            setDocentes(dataDoc);
+                            statusLogs.push(`✅ Docentes cargados (${dataDoc.length} registros)`);
+                        } else {
+                            statusLogs.push(`❌ No se encontró docentes.xlsx`);
+                        }
 
-            // 2. Carga dinámica de Alumnos según la Modalidad Seleccionada
-            useEffect(() => {
-                const loadAlumnosModalidad = async () => {
-                    setLoadingAlumnos(true);
-                    setSelectedAlumno(null);
-                    try {
-                        const fileMap = {
-                            diurno: './diurno.xlsx',
-                            vespertino: './vespertino.xlsx',
-                            semipresencial: './semipresencial.xlsx'
-                        };
-
-                        const resAlu = await fetch(fileMap[modalidad]);
-                        if (!resAlu.ok) throw new Error(`No se encontró el archivo ${modalidad}.xlsx en el repositorio.`);
-                        const bufferAlu = await resAlu.arrayBuffer();
-                        const wbAlu = window.XLSX.read(bufferAlu, { type: 'array' });
-                        const dataAlu = window.XLSX.utils.sheet_to_json(wbAlu.Sheets[wbAlu.SheetNames[0]], { defval: "" });
+                        // 2. Cargar y fusionar modalidades de alumnos
+                        const modalidades = ['diurno.xlsx', 'vespertino.xlsx', 'semipresencial.xlsx'];
                         
-                        const parsedAlumnos = parseUplus(dataAlu);
-                        setAlumnos(parsedAlumnos);
-                        setErrorMsg('');
+                        for (const file of modalidades) {
+                            try {
+                                const res = await fetch(`./${file}`);
+                                if (res.ok) {
+                                    const buffer = await res.arrayBuffer();
+                                    const wb = window.XLSX.read(buffer, { type: 'array' });
+                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+                                    const parsed = parseUplus(data);
+                                    allAlumnos = [...allAlumnos, ...parsed];
+                                    statusLogs.push(`✅ ${file} cargado (${parsed.length} alumnos)`);
+                                } else {
+                                    statusLogs.push(`⚠️ ${file} no encontrado (ignorado)`);
+                                }
+                            } catch (e) {
+                                statusLogs.push(`❌ Error leyendo ${file}`);
+                            }
+                        }
+
+                        setAlumnos(allAlumnos);
+                        setLoadStatus(statusLogs);
+
                     } catch (err) {
-                        console.error(err);
-                        setAlumnos([]);
-                        setErrorMsg(err.message);
+                        console.error("Error global de carga:", err);
                     } finally {
-                        setLoadingAlumnos(false);
+                        setLoading(false);
                     }
                 };
 
-                loadAlumnosModalidad();
-            }, [modalidad]);
+                loadAllData();
+            }, []);
 
             const parseUplus = (data) => {
                 let currentAlumno = null;
@@ -195,73 +191,52 @@
                 a.rut.includes(searchTerm)
             );
 
+            if (loading) {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
+                        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <h2 className="text-xl font-bold text-gray-700">Cargando bases de datos...</h2>
+                        <p className="text-gray-500 mt-2">Uniendo docentes y modalidades automáticamente</p>
+                    </div>
+                );
+            }
+
             return (
                 <div className="max-w-4xl mx-auto p-6 mt-8">
-                    <h1 className="text-3xl font-bold text-green-700 mb-6 border-b-2 border-green-500 pb-2">Notificador U+ Multimodalidad</h1>
+                    <h1 className="text-3xl font-bold text-blue-800 mb-2 border-b-2 border-blue-500 pb-2">Notificador U+ Global</h1>
                     
-                    {errorMsg && (
-                        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6">
-                            <strong>Aviso: </strong> {errorMsg}
-                        </div>
-                    )}
-
-                    {/* Selector de Modalidad */}
-                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-green-600">
-                        <label className="block text-lg font-bold text-gray-700 mb-3">Selecciona la Modalidad:</label>
-                        <div className="grid grid-cols-3 gap-3">
-                            <button 
-                                onClick={() => setModalidad('diurno')}
-                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'diurno' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                            >
-                                ☀️ Diurno
-                            </button>
-                            <button 
-                                onClick={() => setModalidad('vespertino')}
-                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'vespertino' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                            >
-                                🌙 Vespertino
-                            </button>
-                            <button 
-                                onClick={() => setModalidad('semipresencial')}
-                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'semipresencial' ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                            >
-                                💻 Semipresencial
-                            </button>
-                        </div>
-
-                        {/* Estado de carga */}
-                        <div className="flex gap-4 mt-6 text-sm">
-                            <div className={`flex-1 p-3 rounded text-center font-semibold ${!loadingAlumnos && alumnos.length > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                {loadingAlumnos ? 'Cargando alumnos...' : `${alumnos.length} Alumnos (${modalidad.toUpperCase()})`}
-                            </div>
-                            <div className={`flex-1 p-3 rounded text-center font-semibold ${!loadingDocentes && docentes.length > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                                {loadingDocentes ? 'Cargando docentes...' : `${docentes.length} Correos Docentes`}
-                            </div>
-                        </div>
+                    {/* Panel de estado de carga simplificado */}
+                    <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
+                        <strong className="text-gray-800">Estado de archivos:</strong>
+                        {loadStatus.map((status, idx) => (
+                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>
+                                {status}
+                            </span>
+                        ))}
                     </div>
 
-                    {/* Búsqueda de Alumno */}
-                    {alumnos.length > 0 && docentes.length > 0 && (
-                        <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-500">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-700">Buscar Estudiante en {modalidad.toUpperCase()}</h2>
-                            <div className="relative mb-6">
-                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <SearchIcon />
-                                </div>
-                                <input 
-                                    type="text" 
-                                    placeholder="Buscar por Nombre o RUT..." 
-                                    className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                    {/* Búsqueda Global */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
+                        <h2 className="text-xl font-semibold mb-4 text-gray-700">Buscar Estudiante ({alumnos.length} en total)</h2>
+                        <div className="relative mb-6">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <SearchIcon />
                             </div>
+                            <input 
+                                type="text" 
+                                placeholder="Buscar por Nombre o RUT..." 
+                                className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </div>
 
-                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
+                        {searchTerm.length > 0 ? (
+                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50 shadow-inner">
                                 {filteredAlumnos.map((a, idx) => (
                                     <div 
                                         key={idx} 
-                                        className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-500' : ''}`}
+                                        className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 transition ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`}
                                         onClick={() => setSelectedAlumno(a)}
                                     >
                                         <p className="font-semibold text-gray-800">{a.nombre}</p>
@@ -269,16 +244,18 @@
                                     </div>
                                 ))}
                                 {filteredAlumnos.length === 0 && (
-                                    <p className="p-4 text-center text-gray-500">No se encontraron estudiantes en esta modalidad.</p>
+                                    <p className="p-4 text-center text-gray-500">No se encontraron estudiantes con esa búsqueda.</p>
                                 )}
                             </div>
-                        </div>
-                    )}
+                        ) : (
+                            <p className="text-center text-gray-400 italic">Escribe un nombre o RUT para comenzar a buscar.</p>
+                        )}
+                    </div>
 
                     {/* Ficha del Alumno Seleccionado */}
                     {selectedAlumno && (
-                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-yellow-500">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800">Configurar Correo: <span className="text-blue-600">{selectedAlumno.nombre}</span></h2>
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
+                            <h2 className="text-xl font-semibold mb-4 text-gray-800">Configurar Correo: <span className="text-blue-700">{selectedAlumno.nombre}</span></h2>
                             
                             <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                                 <h3 className="font-semibold mb-3 text-gray-700">Docentes a notificar:</h3>
@@ -302,7 +279,7 @@
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-2">Motivo del Correo</label>
                                     <select 
-                                        className="w-full border border-gray-300 rounded-lg p-3 bg-gray-50 focus:ring-yellow-500 focus:border-yellow-500"
+                                        className="w-full border border-gray-300 rounded-lg p-3 bg-white shadow-sm focus:ring-green-500 focus:border-green-500"
                                         value={motivo}
                                         onChange={(e) => setMotivo(e.target.value)}
                                     >
@@ -316,7 +293,7 @@
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">Fecha Límite (Opcional)</label>
                                         <input 
                                             type="date" 
-                                            className="w-full border border-gray-300 rounded-lg p-3 bg-gray-50 focus:ring-yellow-500 focus:border-yellow-500"
+                                            className="w-full border border-gray-300 rounded-lg p-3 bg-white shadow-sm focus:ring-green-500 focus:border-green-500"
                                             value={fechaLimite}
                                             onChange={(e) => setFechaLimite(e.target.value)}
                                         />
@@ -326,10 +303,10 @@
 
                             <button 
                                 onClick={() => handleMailTo(selectedAlumno)}
-                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-lg flex justify-center items-center gap-3 transition shadow-lg text-lg"
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-lg flex justify-center items-center gap-3 transition shadow-lg text-lg"
                             >
                                 <MailIcon />
-                                Abrir Outlook / Correo Predeterminado
+                                Redactar Correo a Docentes
                             </button>
                         </div>
                     )}
