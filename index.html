@@ -24,6 +24,12 @@
             return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
         };
 
+        // Nueva función para limpiar RUTs (quita puntos, guiones y espacios para poder comparar bien)
+        const cleanRut = (rut) => {
+            if (!rut) return "";
+            return String(rut).replace(/[\.\-\s]/g, "").toUpperCase();
+        };
+
         const fuzzyMatch = (name1, name2) => {
             const n1 = normalize(name1).replace(/[^A-Z\s]/g, "");
             const n2 = normalize(name2).replace(/[^A-Z\s]/g, "");
@@ -71,7 +77,6 @@
                                 if (res.ok) {
                                     const buffer = await res.arrayBuffer();
                                     const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    // Volvemos a la lectura clásica que te funcionó la primera vez
                                     const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
                                     const parsed = parseUplusOriginal(data);
                                     allAlumnos = [...allAlumnos, ...parsed];
@@ -96,7 +101,6 @@
                 loadAllData();
             }, []);
 
-            // Motor de lectura original (el de la primera versión)
             const parseUplusOriginal = (data) => {
                 let currentAlumno = null;
                 let parsedAlumnos = [];
@@ -104,12 +108,10 @@
                 for (let i = 0; i < data.length; i++) {
                     const row = data[i];
                     
-                    // Buscamos dinámicamente en cualquier columna de la fila
                     const values = Object.values(row).map(v => String(v).trim());
                     const cargaIndex = values.indexOf('CARGA ACADÉMICA DEFINITIVA');
                     
                     if (cargaIndex !== -1 && data[i+1]) {
-                        // El nombre suele estar en la fila siguiente, y el RUT en la subsiguiente
                         const nameValues = Object.values(data[i+1]);
                         const rutValues = Object.values(data[i+2] || {});
                         
@@ -123,7 +125,6 @@
                     }
                     
                     if (currentAlumno) {
-                        // En la versión que funcionaba, buscaba las claves Data.Column3, 5 y 7
                         const val3 = String(row['Data.Column3'] || row.__EMPTY_2 || values[2] || '').trim();
                         const sec = String(row['Data.Column5'] || row.__EMPTY_4 || values[4] || '').trim();
                         const prof = String(row['Data.Column7'] || row.__EMPTY_6 || values[6] || '').trim();
@@ -190,10 +191,19 @@
                 window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
-            const filteredAlumnos = alumnos.filter(a => 
-                a.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                a.rut.includes(searchTerm)
-            );
+            // Aquí mejoramos el filtro usando cleanRut para evitar problemas de formato
+            const filteredAlumnos = alumnos.filter(a => {
+                if (!searchTerm) return true;
+                const searchLower = searchTerm.toLowerCase();
+                const searchRutClean = cleanRut(searchTerm);
+                const studentRutClean = cleanRut(a.rut);
+                
+                const matchNombre = a.nombre.toLowerCase().includes(searchLower);
+                // Si searchRutClean no está vacío, intentamos buscar por RUT limpio
+                const matchRut = searchRutClean && studentRutClean.includes(searchRutClean);
+                
+                return matchNombre || matchRut;
+            });
 
             if (loading) {
                 return (
@@ -220,7 +230,7 @@
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
                             <input 
                                 type="text" 
-                                placeholder="Buscar por Nombre o RUT..." 
+                                placeholder="Buscar por Nombre o RUT (ej: 12345678-9)..." 
                                 className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -235,6 +245,9 @@
                                         <p className="text-sm text-gray-500">RUT: {a.rut} | {a.asignaturas.length} asignaturas</p>
                                     </div>
                                 ))}
+                                {filteredAlumnos.length === 0 && (
+                                    <p className="p-4 text-center text-gray-500">No se encontraron resultados.</p>
+                                )}
                             </div>
                         )}
                     </div>
