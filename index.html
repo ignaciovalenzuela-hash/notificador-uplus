@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notificador Inteligente U+</title>
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -43,10 +42,8 @@
             const [docentes, setDocentes] = useState([]);
             const [searchTerm, setSearchTerm] = useState('');
             const [selectedAlumno, setSelectedAlumno] = useState(null);
-            
             const [loading, setLoading] = useState(true);
             const [loadStatus, setLoadStatus] = useState([]);
-            
             const [motivo, setMotivo] = useState('extension');
             const [fechaLimite, setFechaLimite] = useState('');
 
@@ -57,7 +54,6 @@
                     let statusLogs = [];
 
                     try {
-                        // 1. Cargar base de docentes (se lee como Diccionario/Objetos)
                         const resDoc = await fetch('./docentes.xlsx');
                         if (resDoc.ok) {
                             const bufferDoc = await resDoc.arrayBuffer();
@@ -65,11 +61,8 @@
                             const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
                             setDocentes(dataDoc);
                             statusLogs.push(`✅ Docentes cargados (${dataDoc.length} registros)`);
-                        } else {
-                            statusLogs.push(`❌ No se encontró docentes.xlsx`);
                         }
 
-                        // 2. Cargar modalidades de alumnos (se leen como Matrices/Grillas brutas para evitar errores de columnas)
                         const modalidades = ['diurno.xlsx', 'vespertino.xlsx', 'semipresencial.xlsx'];
                         
                         for (const file of modalidades) {
@@ -78,13 +71,13 @@
                                 if (res.ok) {
                                     const buffer = await res.arrayBuffer();
                                     const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    // Usamos { header: 1 } para obtener un array de arrays puro, ignorando nombres de columnas
-                                    const rawData = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
-                                    const parsed = parseUplusRobust(rawData);
+                                    // Volvemos a la lectura clásica que te funcionó la primera vez
+                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+                                    const parsed = parseUplusOriginal(data);
                                     allAlumnos = [...allAlumnos, ...parsed];
                                     statusLogs.push(`✅ ${file} cargado (${parsed.length} alumnos)`);
                                 } else {
-                                    statusLogs.push(`⚠️ ${file} no encontrado (ignorado)`);
+                                    statusLogs.push(`⚠️ ${file} no encontrado`);
                                 }
                             } catch (e) {
                                 statusLogs.push(`❌ Error leyendo ${file}`);
@@ -93,9 +86,8 @@
 
                         setAlumnos(allAlumnos);
                         setLoadStatus(statusLogs);
-
                     } catch (err) {
-                        console.error("Error global de carga:", err);
+                        console.error(err);
                     } finally {
                         setLoading(false);
                     }
@@ -104,48 +96,44 @@
                 loadAllData();
             }, []);
 
-            // NUEVO PARSER ROBUSTO PARA EXCEL DE U+
-            const parseUplusRobust = (data) => {
+            // Motor de lectura original (el de la primera versión)
+            const parseUplusOriginal = (data) => {
                 let currentAlumno = null;
                 let parsedAlumnos = [];
                 
                 for (let i = 0; i < data.length; i++) {
-                    const row = data[i] || [];
+                    const row = data[i];
                     
-                    // 1. Buscar en qué columna dice exactamente "CARGA ACADÉMICA DEFINITIVA"
-                    let targetCol = -1;
-                    for (let j = 0; j < row.length; j++) {
-                        if (String(row[j]).trim() === 'CARGA ACADÉMICA DEFINITIVA') {
-                            targetCol = j;
-                            break;
-                        }
-                    }
+                    // Buscamos dinámicamente en cualquier columna de la fila
+                    const values = Object.values(row).map(v => String(v).trim());
+                    const cargaIndex = values.indexOf('CARGA ACADÉMICA DEFINITIVA');
                     
-                    // Si lo encuentra, los datos del alumno están en las 2 filas siguientes, misma columna
-                    if (targetCol !== -1 && data[i+1] && data[i+2]) {
-                        const name = String(data[i+1][targetCol] || '').trim();
-                        const rut = String(data[i+2][targetCol] || '').trim();
+                    if (cargaIndex !== -1 && data[i+1]) {
+                        // El nombre suele estar en la fila siguiente, y el RUT en la subsiguiente
+                        const nameValues = Object.values(data[i+1]);
+                        const rutValues = Object.values(data[i+2] || {});
+                        
+                        const name = String(nameValues[cargaIndex] || nameValues.find(v => v) || '').trim();
+                        const rut = String(rutValues[cargaIndex] || rutValues.find(v => v) || '').trim();
+                        
                         if (name && name !== 'Nombre Ramo') {
                             currentAlumno = { nombre: name, rut: rut, asignaturas: [] };
                             parsedAlumnos.push(currentAlumno);
                         }
-                        continue; 
                     }
-
-                    // 2. Si ya encontramos al alumno, empezamos a leer sus asignaturas
+                    
                     if (currentAlumno) {
-                        // En U+, la Asignatura suele estar en la columna C (índice 2), Sección en E (índice 4), Profe en G (índice 6)
-                        const ramo = String(row[2] || '').trim();
-                        const sec = String(row[4] || '').trim();
-                        const profe = String(row[6] || '').trim();
+                        // En la versión que funcionaba, buscaba las claves Data.Column3, 5 y 7
+                        const val3 = String(row['Data.Column3'] || row.__EMPTY_2 || values[2] || '').trim();
+                        const sec = String(row['Data.Column5'] || row.__EMPTY_4 || values[4] || '').trim();
+                        const prof = String(row['Data.Column7'] || row.__EMPTY_6 || values[6] || '').trim();
 
-                        if (ramo && ramo !== 'Nombre Ramo' && ramo !== 'CARGA ACADÉMICA DEFINITIVA') {
-                            // Validar que la sección sea un número para confirmar que es una asignatura real
+                        if (val3 && val3 !== 'Nombre Ramo' && val3 !== 'CARGA ACADÉMICA DEFINITIVA') {
                             if (sec && !isNaN(parseInt(sec))) {
                                 currentAlumno.asignaturas.push({
-                                    nombre: ramo,
+                                    nombre: val3,
                                     seccion: sec,
-                                    profesor: profe
+                                    profesor: prof
                                 });
                             }
                         }
@@ -191,20 +179,15 @@
                 let body = `Estimados docentes,\n\nJunto con saludar, les escribo en relación a la/el estudiante ${alumno.nombre} (RUT: ${alumno.rut}).\n\n`;
                 
                 if (motivo === 'extension') {
-                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el día ${fechaLimite}` : ''}. El estudiante se encuentra con una situación justificada en plataforma.\n\n`;
+                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el día ${fechaLimite}` : ''}.\n\n`;
                 } else if (motivo === 'justificacion') {
-                    body += `El motivo de este correo es informar que el estudiante ha presentado justificativo válido. Solicitamos amablemente que pueda coordinar directamente con ustedes la recuperación de evaluaciones pendientes.\n\n`;
+                    body += `El motivo de este correo es informar que el estudiante ha presentado justificativo válido.\n\n`;
                 } else {
                     body += `[Escriba su mensaje aquí]\n\n`;
                 }
-                body += `Agradeciendo su comprensión y apoyo,\nSaludos cordiales.`;
+                body += `Saludos cordiales.`;
 
-                const mailtoLink = `mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                
-                const a = document.createElement('a');
-                a.href = mailtoLink;
-                a.target = '_blank';
-                a.click();
+                window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
             const filteredAlumnos = alumnos.filter(a => 
@@ -215,9 +198,8 @@
             if (loading) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
-                        <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold text-gray-700">Cargando bases de datos...</h2>
-                        <p className="text-gray-500 mt-2">Uniendo docentes y modalidades automáticamente</p>
+                        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <h2 className="text-xl font-bold">Cargando datos...</h2>
                     </div>
                 );
             }
@@ -227,104 +209,69 @@
                     <h1 className="text-3xl font-bold text-blue-800 mb-2 border-b-2 border-blue-500 pb-2">Notificador U+ Global</h1>
                     
                     <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
-                        <strong className="text-gray-800">Estado de archivos:</strong>
                         {loadStatus.map((status, idx) => (
-                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700 font-medium'}>
-                                {status}
-                            </span>
+                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>{status}</span>
                         ))}
                     </div>
 
                     <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
-                        <h2 className="text-xl font-semibold mb-4 text-gray-700">Buscar Estudiante ({alumnos.length} en total)</h2>
+                        <h2 className="text-xl font-semibold mb-4">Buscar Estudiante ({alumnos.length} en total)</h2>
                         <div className="relative mb-6">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <SearchIcon />
-                            </div>
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
                             <input 
                                 type="text" 
                                 placeholder="Buscar por Nombre o RUT..." 
-                                className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
+                                className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
 
-                        {searchTerm.length > 0 ? (
-                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50 shadow-inner">
+                        {searchTerm.length > 0 && (
+                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
                                 {filteredAlumnos.map((a, idx) => (
-                                    <div 
-                                        key={idx} 
-                                        className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 transition ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`}
-                                        onClick={() => setSelectedAlumno(a)}
-                                    >
-                                        <p className="font-semibold text-gray-800">{a.nombre}</p>
+                                    <div key={idx} className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`} onClick={() => setSelectedAlumno(a)}>
+                                        <p className="font-semibold">{a.nombre}</p>
                                         <p className="text-sm text-gray-500">RUT: {a.rut} | {a.asignaturas.length} asignaturas</p>
                                     </div>
                                 ))}
-                                {filteredAlumnos.length === 0 && (
-                                    <p className="p-4 text-center text-gray-500">No se encontraron estudiantes con esa búsqueda.</p>
-                                )}
                             </div>
-                        ) : (
-                            <p className="text-center text-gray-400 italic">Escribe un nombre o RUT para comenzar a buscar.</p>
                         )}
                     </div>
 
                     {selectedAlumno && (
                         <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800">Configurar Correo: <span className="text-blue-700">{selectedAlumno.nombre}</span></h2>
+                            <h2 className="text-xl font-semibold mb-4">Configurar Correo: <span className="text-blue-700">{selectedAlumno.nombre}</span></h2>
                             
                             <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                <h3 className="font-semibold mb-3 text-gray-700">Docentes a notificar:</h3>
                                 <ul className="text-sm space-y-2">
                                     {selectedAlumno.asignaturas.map((asig, i) => {
                                         const email = getDocenteEmail(asig.nombre, asig.seccion, asig.profesor);
                                         return (
-                                            <li key={i} className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 pb-2">
-                                                <span className="font-medium text-gray-700">{asig.nombre} <span className="text-gray-500 font-normal">(Sec. {asig.seccion})</span></span>
-                                                {email ? 
-                                                    <span className="text-green-700 bg-green-100 px-2 py-1 rounded text-xs font-bold mt-1 sm:mt-0">{email}</span> : 
-                                                    <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs mt-1 sm:mt-0">Falta correo en base</span>
-                                                }
+                                            <li key={i} className="flex justify-between border-b pb-2">
+                                                <span>{asig.nombre} (Sec. {asig.seccion})</span>
+                                                <span className={email ? "text-green-700 font-bold" : "text-red-600"}>{email || "Sin correo"}</span>
                                             </li>
                                         );
                                     })}
                                 </ul>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div className="grid grid-cols-2 gap-4 mb-6">
                                 <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Motivo del Correo</label>
-                                    <select 
-                                        className="w-full border border-gray-300 rounded-lg p-3 bg-white shadow-sm focus:ring-green-500 focus:border-green-500"
-                                        value={motivo}
-                                        onChange={(e) => setMotivo(e.target.value)}
-                                    >
+                                    <select className="w-full border p-3 rounded-lg" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
                                         <option value="extension">Extensión de Plazos</option>
-                                        <option value="justificacion">Justificación Médica / Recuperación</option>
+                                        <option value="justificacion">Justificación Médica</option>
                                         <option value="libre">Mensaje Libre</option>
                                     </select>
                                 </div>
                                 {motivo === 'extension' && (
-                                    <div>
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Fecha Límite (Opcional)</label>
-                                        <input 
-                                            type="date" 
-                                            className="w-full border border-gray-300 rounded-lg p-3 bg-white shadow-sm focus:ring-green-500 focus:border-green-500"
-                                            value={fechaLimite}
-                                            onChange={(e) => setFechaLimite(e.target.value)}
-                                        />
-                                    </div>
+                                    <input type="date" className="w-full border p-3 rounded-lg" value={fechaLimite} onChange={(e) => setFechaLimite(e.target.value)} />
                                 )}
                             </div>
 
-                            <button 
-                                onClick={() => handleMailTo(selectedAlumno)}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-4 rounded-lg flex justify-center items-center gap-3 transition shadow-lg text-lg"
-                            >
-                                <MailIcon />
-                                Redactar Correo a Docentes
+                            <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg flex justify-center gap-2">
+                                <MailIcon /> Redactar Correo
                             </button>
                         </div>
                     )}
