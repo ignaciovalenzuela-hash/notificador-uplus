@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador U+ Docentes</title>
+    <title>Notificador U+ Multimodalidad</title>
     
-    <!-- Librerías desde CDN seguros -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -18,12 +17,9 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- Iconos en formato SVG ---
-        const UploadIcon = () => <svg className="w-10 h-10 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
         const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
         const MailIcon = () => <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
 
-        // --- Funciones de limpieza de texto ---
         const normalize = (str) => {
             if (!str) return "";
             return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
@@ -42,53 +38,74 @@
             return matches >= 2 && matches >= (Math.min(w1.length, w2.length) - 1);
         };
 
-        // --- Componente Principal ---
         function App() {
+            const [modalidad, setModalidad] = useState('diurno');
             const [alumnos, setAlumnos] = useState([]);
             const [docentes, setDocentes] = useState([]);
             const [searchTerm, setSearchTerm] = useState('');
             const [selectedAlumno, setSelectedAlumno] = useState(null);
-            const [filesLoaded, setFilesLoaded] = useState({ uplus: false, docentes: false });
             
-            // Estado para plantillas de correo
+            const [loadingAlumnos, setLoadingAlumnos] = useState(false);
+            const [loadingDocentes, setLoadingDocentes] = useState(false);
+            const [errorMsg, setErrorMsg] = useState('');
+            
             const [motivo, setMotivo] = useState('extension');
             const [fechaLimite, setFechaLimite] = useState('');
-            
-            const processFiles = async (e) => {
-                const files = Array.from(e.target.files);
-                let tempDocentes = [...docentes];
-                let tempAlumnos = [...alumnos];
-                let uplusFound = false;
-                let docentesFound = false;
 
-                for (let file of files) {
-                    const data = await file.arrayBuffer();
-                    const workbook = window.XLSX.read(data, { type: 'array' });
-                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-                    const jsonData = window.XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
-
-                    if (jsonData.length === 0) continue;
-
-                    // Detectar si es el archivo bruto de U+
-                    const isUplus = Object.keys(jsonData[0]).some(k => k.includes('Data.Column'));
-                    
-                    if (isUplus) {
-                        tempAlumnos = parseUplus(jsonData);
-                        uplusFound = true;
-                    } else {
-                        tempDocentes = jsonData;
-                        docentesFound = true;
+            // 1. Carga inicial de Correos de Docentes
+            useEffect(() => {
+                const loadDocentes = async () => {
+                    setLoadingDocentes(true);
+                    try {
+                        const resDoc = await fetch('./docentes.xlsx');
+                        if (!resDoc.ok) throw new Error("No se encontró docentes.xlsx en el repositorio.");
+                        const bufferDoc = await resDoc.arrayBuffer();
+                        const wbDoc = window.XLSX.read(bufferDoc, { type: 'array' });
+                        const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
+                        setDocentes(dataDoc);
+                        setErrorMsg('');
+                    } catch (err) {
+                        console.error(err);
+                        setErrorMsg(err.message);
+                    } finally {
+                        setLoadingDocentes(false);
                     }
-                }
+                };
+                loadDocentes();
+            }, []);
 
-                if (docentesFound) setDocentes(tempDocentes);
-                if (uplusFound) setAlumnos(tempAlumnos);
-                
-                setFilesLoaded(prev => ({
-                    uplus: prev.uplus || uplusFound,
-                    docentes: prev.docentes || docentesFound
-                }));
-            };
+            // 2. Carga dinámica de Alumnos según la Modalidad Seleccionada
+            useEffect(() => {
+                const loadAlumnosModalidad = async () => {
+                    setLoadingAlumnos(true);
+                    setSelectedAlumno(null);
+                    try {
+                        const fileMap = {
+                            diurno: './diurno.xlsx',
+                            vespertino: './vespertino.xlsx',
+                            semipresencial: './semipresencial.xlsx'
+                        };
+
+                        const resAlu = await fetch(fileMap[modalidad]);
+                        if (!resAlu.ok) throw new Error(`No se encontró el archivo ${modalidad}.xlsx en el repositorio.`);
+                        const bufferAlu = await resAlu.arrayBuffer();
+                        const wbAlu = window.XLSX.read(bufferAlu, { type: 'array' });
+                        const dataAlu = window.XLSX.utils.sheet_to_json(wbAlu.Sheets[wbAlu.SheetNames[0]], { defval: "" });
+                        
+                        const parsedAlumnos = parseUplus(dataAlu);
+                        setAlumnos(parsedAlumnos);
+                        setErrorMsg('');
+                    } catch (err) {
+                        console.error(err);
+                        setAlumnos([]);
+                        setErrorMsg(err.message);
+                    } finally {
+                        setLoadingAlumnos(false);
+                    }
+                };
+
+                loadAlumnosModalidad();
+            }, [modalidad]);
 
             const parseUplus = (data) => {
                 let currentAlumno = null;
@@ -98,7 +115,6 @@
                     const row = data[i];
                     const val3 = String(row['Data.Column3'] || '').trim();
                     
-                    // Cuando encuentra "CARGA ACADÉMICA DEFINITIVA", la siguiente fila tiene el nombre y la otra el RUT
                     if (val3 === 'CARGA ACADÉMICA DEFINITIVA' && data[i+1]) {
                         const name = String(data[i+1]['Data.Column3'] || '').trim();
                         const rut = String(data[i+2]['Data.Column3'] || '').trim();
@@ -107,7 +123,6 @@
                             parsedAlumnos.push(currentAlumno);
                         }
                     }
-                    // Si ya tenemos un alumno, buscar ramos (Si la Columna 5 es un número de sección)
                     if (currentAlumno && val3 && val3 !== 'Nombre Ramo' && val3 !== 'CARGA ACADÉMICA DEFINITIVA') {
                         const sec = String(row['Data.Column5'] || '').trim();
                         if (sec && !isNaN(parseInt(sec))) {
@@ -126,7 +141,6 @@
                 const ramoClean = normalize(ramo);
                 const secClean = normalize(seccion);
                 
-                // MOTOR 1: Buscar por Asignatura y Sección Exacta
                 for (let doc of docentes) {
                     const docSubj = normalize(doc['Nombre'] || doc['Asignatura']);
                     const docSec = normalize(doc['Codsecc'] || doc['Sección']);
@@ -135,7 +149,6 @@
                     }
                 }
                 
-                // MOTOR 2: Respaldo (Buscar por coincidencia de nombre de profesor)
                 if (profesor && profesor !== 'Profesor') {
                     for (let doc of docentes) {
                         const docName = doc['NombreProfe'] || doc['Profesor'];
@@ -169,8 +182,6 @@
                 }
                 body += `Agradeciendo su comprensión y apoyo,\nSaludos cordiales.`;
 
-                // Usamos BCC (Copia oculta) para que los profes no se vean entre ellos si prefieres privacidad.
-                // Si quieres que todos se vean, cambia "bcc=" por "to="
                 const mailtoLink = `mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                 
                 const a = document.createElement('a');
@@ -186,30 +197,53 @@
 
             return (
                 <div className="max-w-4xl mx-auto p-6 mt-8">
-                    <h1 className="text-3xl font-bold text-green-700 mb-6 border-b-2 border-green-500 pb-2">Notificador Inteligente U+</h1>
+                    <h1 className="text-3xl font-bold text-green-700 mb-6 border-b-2 border-green-500 pb-2">Notificador U+ Multimodalidad</h1>
                     
-                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-green-500">
-                        <h2 className="text-xl font-semibold mb-4 text-gray-700">1. Cargar Archivos</h2>
-                        <div className="border-2 border-dashed border-green-400 rounded-lg p-8 text-center bg-green-50 hover:bg-green-100 transition relative">
-                            <input type="file" multiple accept=".xlsx, .xls" onChange={processFiles} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            <UploadIcon />
-                            <p className="mt-2 text-gray-700 text-lg"><strong>Arrastra tus archivos Excel aquí</strong></p>
-                            <p className="text-sm text-gray-500">Sube "Base de datos Diurno" y "Correos docentes" juntos.</p>
+                    {errorMsg && (
+                        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6">
+                            <strong>Aviso: </strong> {errorMsg}
                         </div>
-                        
-                        <div className="flex gap-4 mt-4">
-                            <div className={`flex-1 p-3 rounded text-center font-medium ${filesLoaded.uplus ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
-                                {filesLoaded.uplus ? `✅ ${alumnos.length} Alumnos` : 'Esperando base U+...'}
+                    )}
+
+                    {/* Selector de Modalidad */}
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-green-600">
+                        <label className="block text-lg font-bold text-gray-700 mb-3">Selecciona la Modalidad:</label>
+                        <div className="grid grid-cols-3 gap-3">
+                            <button 
+                                onClick={() => setModalidad('diurno')}
+                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'diurno' ? 'bg-green-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                            >
+                                ☀️ Diurno
+                            </button>
+                            <button 
+                                onClick={() => setModalidad('vespertino')}
+                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'vespertino' ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                            >
+                                🌙 Vespertino
+                            </button>
+                            <button 
+                                onClick={() => setModalidad('semipresencial')}
+                                className={`py-3 px-4 rounded-lg font-bold transition ${modalidad === 'semipresencial' ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                            >
+                                💻 Semipresencial
+                            </button>
+                        </div>
+
+                        {/* Estado de carga */}
+                        <div className="flex gap-4 mt-6 text-sm">
+                            <div className={`flex-1 p-3 rounded text-center font-semibold ${!loadingAlumnos && alumnos.length > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                {loadingAlumnos ? 'Cargando alumnos...' : `${alumnos.length} Alumnos (${modalidad.toUpperCase()})`}
                             </div>
-                            <div className={`flex-1 p-3 rounded text-center font-medium ${filesLoaded.docentes ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
-                                {filesLoaded.docentes ? `✅ ${docentes.length} Correos` : 'Esperando base Docentes...'}
+                            <div className={`flex-1 p-3 rounded text-center font-semibold ${!loadingDocentes && docentes.length > 0 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                {loadingDocentes ? 'Cargando docentes...' : `${docentes.length} Correos Docentes`}
                             </div>
                         </div>
                     </div>
 
+                    {/* Búsqueda de Alumno */}
                     {alumnos.length > 0 && docentes.length > 0 && (
                         <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-500">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-700">2. Buscar Estudiante</h2>
+                            <h2 className="text-xl font-semibold mb-4 text-gray-700">Buscar Estudiante en {modalidad.toUpperCase()}</h2>
                             <div className="relative mb-6">
                                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                     <SearchIcon />
@@ -234,13 +268,17 @@
                                         <p className="text-sm text-gray-500">RUT: {a.rut} | {a.asignaturas.length} asignaturas</p>
                                     </div>
                                 ))}
+                                {filteredAlumnos.length === 0 && (
+                                    <p className="p-4 text-center text-gray-500">No se encontraron estudiantes en esta modalidad.</p>
+                                )}
                             </div>
                         </div>
                     )}
 
+                    {/* Ficha del Alumno Seleccionado */}
                     {selectedAlumno && (
-                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-yellow-500 animate-fade-in">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800">3. Configurar Correo: <span className="text-blue-600">{selectedAlumno.nombre}</span></h2>
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-yellow-500">
+                            <h2 className="text-xl font-semibold mb-4 text-gray-800">Configurar Correo: <span className="text-blue-600">{selectedAlumno.nombre}</span></h2>
                             
                             <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                                 <h3 className="font-semibold mb-3 text-gray-700">Docentes a notificar:</h3>
