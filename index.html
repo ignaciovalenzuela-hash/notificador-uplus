@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notificador U+ Docentes</title>
+    
+    <!-- Librerías desde CDN seguros -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Iconos en formato SVG ---
+        const UploadIcon = () => <svg className="w-10 h-10 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
+        const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
+        const MailIcon = () => <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
+
+        // --- Funciones de limpieza de texto ---
+        const normalize = (str) => {
+            if (!str) return "";
+            return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+        };
+
+        const fuzzyMatch = (name1, name2) => {
+            const n1 = normalize(name1).replace(/[^A-Z\s]/g, "");
+            const n2 = normalize(name2).replace(/[^A-Z\s]/g, "");
+            if (!n1 || !n2) return false;
+            const stopwords = ['DE', 'DEL', 'LA', 'LAS', 'LOS', 'Y'];
+            const w1 = n1.split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
+            const w2 = n2.split(' ').filter(w => w.length > 2 && !stopwords.includes(w));
+            
+            let matches = 0;
+            w1.forEach(w => { if (w2.includes(w)) matches++; });
+            return matches >= 2 && matches >= (Math.min(w1.length, w2.length) - 1);
+        };
+
+        // --- Componente Principal ---
+        function App() {
+            const [alumnos, setAlumnos] = useState([]);
+            const [docentes, setDocentes] = useState([]);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [selectedAlumno, setSelectedAlumno] = useState(null);
+            const [filesLoaded, setFilesLoaded] = useState({ uplus: false, docentes: false });
+            
+            // Estado para plantillas de correo
+            const [motivo, setMotivo] = useState('extension');
+            const [fechaLimite, setFechaLimite] = useState('');
+            
+            const processFiles = async (e) => {
+                const files = Array.from(e.target.files);
+                let tempDocentes = [...docentes];
+                let tempAlumnos = [...alumnos];
+                let uplusFound = false;
+                let docentesFound = false;
+
+                for (let file of files) {
+                    const data = await file.arrayBuffer();
+                    const workbook = window.XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = window.XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+
+                    if (jsonData.length === 0) continue;
+
+                    // Detectar si es el archivo bruto de U+
+                    const isUplus = Object.keys(jsonData[0]).some(k => k.includes('Data.Column'));
+                    
+                    if (isUplus) {
+                        tempAlumnos = parseUplus(jsonData);
+                        uplusFound = true;
+                    } else {
+                        tempDocentes = jsonData;
+                        docentesFound = true;
+                    }
+                }
+
+                if (docentesFound) setDocentes(tempDocentes);
+                if (uplusFound) setAlumnos(tempAlumnos);
+                
+                setFilesLoaded(prev => ({
+                    uplus: prev.uplus || uplusFound,
+                    docentes: prev.docentes || docentesFound
+                }));
+            };
+
+            const parseUplus = (data) => {
+                let currentAlumno = null;
+                let parsedAlumnos = [];
+                
+                for (let i = 0; i < data.length; i++) {
+                    const row = data[i];
+                    const val3 = String(row['Data.Column3'] || '').trim();
+                    
+                    // Cuando encuentra "CARGA ACADÉMICA DEFINITIVA", la siguiente fila tiene el nombre y la otra el RUT
+                    if (val3 === 'CARGA ACADÉMICA DEFINITIVA' && data[i+1]) {
+                        const name = String(data[i+1]['Data.Column3'] || '').trim();
+                        const rut = String(data[i+2]['Data.Column3'] || '').trim();
+                        if (name) {
+                            currentAlumno = { nombre: name, rut: rut, asignaturas: [] };
+                            parsedAlumnos.push(currentAlumno);
+                        }
+                    }
+                    // Si ya tenemos un alumno, buscar ramos (Si la Columna 5 es un número de sección)
+                    if (currentAlumno && val3 && val3 !== 'Nombre Ramo' && val3 !== 'CARGA ACADÉMICA DEFINITIVA') {
+                        const sec = String(row['Data.Column5'] || '').trim();
+                        if (sec && !isNaN(parseInt(sec))) {
+                            currentAlumno.asignaturas.push({
+                                nombre: val3,
+                                seccion: sec,
+                                profesor: String(row['Data.Column7'] || '').trim()
+                            });
+                        }
+                    }
+                }
+                return parsedAlumnos;
+            };
+
+            const getDocenteEmail = (ramo, seccion, profesor) => {
+                const ramoClean = normalize(ramo);
+                const secClean = normalize(seccion);
+                
+                // MOTOR 1: Buscar por Asignatura y Sección Exacta
+                for (let doc of docentes) {
+                    const docSubj = normalize(doc['Nombre'] || doc['Asignatura']);
+                    const docSec = normalize(doc['Codsecc'] || doc['Sección']);
+                    if (docSubj === ramoClean && docSec === secClean) {
+                        return doc['CORREO INSTITUCIONAL'] || doc['Correo'] || "";
+                    }
+                }
+                
+                // MOTOR 2: Respaldo (Buscar por coincidencia de nombre de profesor)
+                if (profesor && profesor !== 'Profesor') {
+                    for (let doc of docentes) {
+                        const docName = doc['NombreProfe'] || doc['Profesor'];
+                        if (docName && fuzzyMatch(profesor, docName)) {
+                            return doc['CORREO INSTITUCIONAL'] || doc['Correo'] || "";
+                        }
+                    }
+                }
+                return "";
+            };
+
+            const handleMailTo = (alumno) => {
+                const correosRaw = alumno.asignaturas.map(a => getDocenteEmail(a.nombre, a.seccion, a.profesor));
+                const correosValidos = correosRaw.filter(c => c && c.includes('@'));
+                const unicos = [...new Set(correosValidos)].join(';');
+
+                if (!unicos) {
+                    alert("No se encontraron correos para abrir Outlook.");
+                    return;
+                }
+
+                let subject = `Situación académica estudiante ${alumno.nombre}`;
+                let body = `Estimados docentes,\n\nJunto con saludar, les escribo en relación a la/el estudiante ${alumno.nombre} (RUT: ${alumno.rut}).\n\n`;
+                
+                if (motivo === 'extension') {
+                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el día ${fechaLimite}` : ''}. El estudiante se encuentra con una situación justificada en plataforma.\n\n`;
+                } else if (motivo === 'justificacion') {
+                    body += `El motivo de este correo es informar que el estudiante ha presentado justificativo válido. Solicitamos amablemente que pueda coordinar directamente con ustedes la recuperación de evaluaciones pendientes.\n\n`;
+                } else {
+                    body += `[Escriba su mensaje aquí]\n\n`;
+                }
+                body += `Agradeciendo su comprensión y apoyo,\nSaludos cordiales.`;
+
+                // Usamos BCC (Copia oculta) para que los profes no se vean entre ellos si prefieres privacidad.
+                // Si quieres que todos se vean, cambia "bcc=" por "to="
+                const mailtoLink = `mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                
+                const a = document.createElement('a');
+                a.href = mailtoLink;
+                a.target = '_blank';
+                a.click();
+            };
+
+            const filteredAlumnos = alumnos.filter(a => 
+                a.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                a.rut.includes(searchTerm)
+            );
+
+            return (
+                <div className="max-w-4xl mx-auto p-6 mt-8">
+                    <h1 className="text-3xl font-bold text-green-700 mb-6 border-b-2 border-green-500 pb-2">Notificador Inteligente U+</h1>
+                    
+                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-green-500">
+                        <h2 className="text-xl font-semibold mb-4 text-gray-700">1. Cargar Archivos</h2>
+                        <div className="border-2 border-dashed border-green-400 rounded-lg p-8 text-center bg-green-50 hover:bg-green-100 transition relative">
+                            <input type="file" multiple accept=".xlsx, .xls" onChange={processFiles} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                            <UploadIcon />
+                            <p className="mt-2 text-gray-700 text-lg"><strong>Arrastra tus archivos Excel aquí</strong></p>
+                            <p className="text-sm text-gray-500">Sube "Base de datos Diurno" y "Correos docentes" juntos.</p>
+                        </div>
+                        
+                        <div className="flex gap-4 mt-4">
+                            <div className={`flex-1 p-3 rounded text-center font-medium ${filesLoaded.uplus ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
+                                {filesLoaded.uplus ? `✅ ${alumnos.length} Alumnos` : 'Esperando base U+...'}
+                            </div>
+                            <div className={`flex-1 p-3 rounded text-center font-medium ${filesLoaded.docentes ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}`}>
+                                {filesLoaded.docentes ? `✅ ${docentes.length} Correos` : 'Esperando base Docentes...'}
+                            </div>
+                        </div>
+                    </div>
+
+                    {alumnos.length > 0 && docentes.length > 0 && (
+                        <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-500">
+                            <h2 className="text-xl font-semibold mb-4 text-gray-700">2. Buscar Estudiante</h2>
+                            <div className="relative mb-6">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                    <SearchIcon />
+                                </div>
+                                <input 
+                                    type="text" 
+                                    placeholder="Buscar por Nombre o RUT..." 
+                                    className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
+                                {filteredAlumnos.map((a, idx) => (
+                                    <div 
+                                        key={idx} 
+                                        className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-500' : ''}`}
+                                        onClick={() => setSelectedAlumno(a)}
+                                    >
+                                        <p className="font-semibold text-gray-800">{a.nombre}</p>
+                                        <p className="text-sm text-gray-500">RUT: {a.rut} | {a.asignaturas.length} asignaturas</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {selectedAlumno && (
+                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-yellow-500 animate-fade-in">
+                            <h2 className="text-xl font-semibold mb-4 text-gray-800">3. Configurar Correo: <span className="text-blue-600">{selectedAlumno.nombre}</span></h2>
+                            
+                            <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                <h3 className="font-semibold mb-3 text-gray-700">Docentes a notificar:</h3>
+                                <ul className="text-sm space-y-2">
+                                    {selectedAlumno.asignaturas.map((asig, i) => {
+                                        const email = getDocenteEmail(asig.nombre, asig.seccion, asig.profesor);
+                                        return (
+                                            <li key={i} className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 pb-2">
+                                                <span className="font-medium text-gray-700">{asig.nombre} <span className="text-gray-500 font-normal">(Sec. {asig.seccion})</span></span>
+                                                {email ? 
+                                                    <span className="text-green-700 bg-green-100 px-2 py-1 rounded text-xs font-bold mt-1 sm:mt-0">{email}</span> : 
+                                                    <span className="text-red-600 bg-red-100 px-2 py-1 rounded text-xs mt-1 sm:mt-0">Falta correo en base</span>
+                                                }
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Motivo del Correo</label>
+                                    <select 
+                                        className="w-full border border-gray-300 rounded-lg p-3 bg-gray-50 focus:ring-yellow-500 focus:border-yellow-500"
+                                        value={motivo}
+                                        onChange={(e) => setMotivo(e.target.value)}
+                                    >
+                                        <option value="extension">Extensión de Plazos</option>
+                                        <option value="justificacion">Justificación Médica / Recuperación</option>
+                                        <option value="libre">Mensaje Libre</option>
+                                    </select>
+                                </div>
+                                {motivo === 'extension' && (
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Fecha Límite (Opcional)</label>
+                                        <input 
+                                            type="date" 
+                                            className="w-full border border-gray-300 rounded-lg p-3 bg-gray-50 focus:ring-yellow-500 focus:border-yellow-500"
+                                            value={fechaLimite}
+                                            onChange={(e) => setFechaLimite(e.target.value)}
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            <button 
+                                onClick={() => handleMailTo(selectedAlumno)}
+                                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-4 rounded-lg flex justify-center items-center gap-3 transition shadow-lg text-lg"
+                            >
+                                <MailIcon />
+                                Abrir Outlook / Correo Predeterminado
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
