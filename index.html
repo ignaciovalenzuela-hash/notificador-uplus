@@ -24,10 +24,10 @@
             return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
         };
 
-        // Nueva función para limpiar RUTs (quita puntos, guiones y espacios para poder comparar bien)
+        // LIMPIADOR AGRESIVO: Elimina todo texto, punto, guion o espacio. Solo deja números y la letra K.
         const cleanRut = (rut) => {
             if (!rut) return "";
-            return String(rut).replace(/[\.\-\s]/g, "").toUpperCase();
+            return String(rut).replace(/[^0-9Kk]/g, "").toUpperCase();
         };
 
         const fuzzyMatch = (name1, name2) => {
@@ -116,10 +116,11 @@
                         const rutValues = Object.values(data[i+2] || {});
                         
                         const name = String(nameValues[cargaIndex] || nameValues.find(v => v) || '').trim();
-                        const rut = String(rutValues[cargaIndex] || rutValues.find(v => v) || '').trim();
+                        // Extraemos el RUT e intentamos limpiarlo desde el origen
+                        let rutRaw = String(rutValues[cargaIndex] || rutValues.find(v => v) || '').trim();
                         
                         if (name && name !== 'Nombre Ramo') {
-                            currentAlumno = { nombre: name, rut: rut, asignaturas: [] };
+                            currentAlumno = { nombre: name, rut: rutRaw, asignaturas: [] };
                             parsedAlumnos.push(currentAlumno);
                         }
                     }
@@ -191,16 +192,19 @@
                 window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
-            // Aquí mejoramos el filtro usando cleanRut para evitar problemas de formato
             const filteredAlumnos = alumnos.filter(a => {
                 if (!searchTerm) return true;
-                const searchLower = searchTerm.toLowerCase();
+                
+                const searchLower = normalize(searchTerm);
+                const nombreLimpio = normalize(a.nombre);
                 const searchRutClean = cleanRut(searchTerm);
                 const studentRutClean = cleanRut(a.rut);
                 
-                const matchNombre = a.nombre.toLowerCase().includes(searchLower);
-                // Si searchRutClean no está vacío, intentamos buscar por RUT limpio
-                const matchRut = searchRutClean && studentRutClean.includes(searchRutClean);
+                // Busca coincidencias en el nombre normalizado (sin tildes)
+                const matchNombre = nombreLimpio.includes(searchLower);
+                
+                // Busca coincidencias en el RUT solo si el término de búsqueda tiene números
+                const matchRut = searchRutClean.length > 2 && studentRutClean.includes(searchRutClean);
                 
                 return matchNombre || matchRut;
             });
@@ -246,7 +250,7 @@
                                     </div>
                                 ))}
                                 {filteredAlumnos.length === 0 && (
-                                    <p className="p-4 text-center text-gray-500">No se encontraron resultados.</p>
+                                    <p className="p-4 text-center text-gray-500">No se encontraron resultados para "{searchTerm}".</p>
                                 )}
                             </div>
                         )}
