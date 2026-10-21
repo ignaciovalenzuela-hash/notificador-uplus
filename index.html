@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.3)</title>
+    <title>Notificador Inteligente U+ (V.4)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -21,7 +21,7 @@
 
         const normalize = (str) => {
             if (!str) return "";
-            return str.toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+            return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
         };
 
         const cleanRut = (rut) => {
@@ -76,8 +76,9 @@
                                 if (res.ok) {
                                     const buffer = await res.arrayBuffer();
                                     const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
-                                    const parsed = parseUplusV3(data);
+                                    // Usamos header: 1 para obtener todo como un arreglo de arreglos (una grilla pura)
+                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+                                    const parsed = parseUplusV4(data);
                                     allAlumnos = [...allAlumnos, ...parsed];
                                     statusLogs.push(`✅ ${file} cargado (${parsed.length} alumnos)`);
                                 } else {
@@ -100,47 +101,51 @@
                 loadAllData();
             }, []);
 
-            // LÓGICA V.3 - LECTURA DIRECTA POR ETIQUETAS EXACTAS
-            const parseUplusV3 = (data) => {
+            // LÓGICA V.4 - LECTURA MATRICIAL IGNORANDO COLUMNAS VACÍAS
+            const parseUplusV4 = (data) => {
                 let currentAlumno = null;
                 let parsedAlumnos = [];
                 
                 for (let i = 0; i < data.length; i++) {
-                    const row = data[i];
-                    // Convertimos toda la fila en un arreglo de textos
-                    const values = Object.values(row).map(v => String(v).trim());
+                    const row = data[i].map(v => v ? String(v).trim() : '');
                     
-                    // 1. Buscar Nombre por etiqueta exacta
-                    const idxNombre = values.indexOf('Nombre del Alumno:');
+                    // 1. Buscar Nombre saltando celdas en blanco hacia la derecha
+                    const idxNombre = row.indexOf('Nombre del Alumno:');
                     if (idxNombre !== -1) {
-                        const nombre = values[idxNombre + 1]; // El valor justo al lado
+                        let nombre = "";
+                        for (let j = idxNombre + 1; j < row.length; j++) {
+                            if (row[j]) { nombre = row[j]; break; }
+                        }
                         if (nombre) {
                             currentAlumno = { nombre: nombre, rut: '', asignaturas: [] };
                             parsedAlumnos.push(currentAlumno);
                         }
                     }
                     
-                    // 2. Buscar RUT por etiqueta exacta
-                    const idxRut = values.indexOf('Rut del Alumno:');
+                    // 2. Buscar RUT saltando celdas en blanco hacia la derecha
+                    const idxRut = row.indexOf('Rut del Alumno:');
                     if (idxRut !== -1 && currentAlumno) {
-                        const rut = values[idxRut + 1]; // El valor justo al lado
+                        let rut = "";
+                        for (let j = idxRut + 1; j < row.length; j++) {
+                            if (row[j]) { rut = row[j]; break; }
+                        }
                         if (rut) {
                             currentAlumno.rut = rut;
                         }
                     }
                     
-                    // 3. Buscar Asignaturas
+                    // 3. Extraer Asignaturas usando los índices estables de la grilla
                     if (currentAlumno) {
-                        const asigName = String(row['Data.Column3'] || row.__EMPTY_2 || values[3] || '').trim();
-                        const sec = String(row['Data.Column5'] || row.__EMPTY_4 || values[5] || '').trim();
-                        const prof = String(row['Data.Column7'] || row.__EMPTY_6 || values[7] || '').trim();
+                        const asigName = row[3] || '';
+                        const sec = row[5] || '';
+                        const prof = row[7] || '';
 
                         if (asigName && asigName !== 'Nombre Ramo' && asigName !== 'CARGA ACADÉMICA DEFINITIVA' && !asigName.includes('Año:')) {
                             if (sec && !isNaN(parseInt(sec))) {
                                 currentAlumno.asignaturas.push({
                                     nombre: asigName,
                                     seccion: sec,
-                                    profesor: prof === 'undefined' || prof === 'nan' ? '' : prof
+                                    profesor: prof
                                 });
                             }
                         }
@@ -199,14 +204,12 @@
 
             const filteredAlumnos = alumnos.filter(a => {
                 if (!searchTerm) return true;
-                
                 const searchLower = normalize(searchTerm);
                 const nombreLimpio = normalize(a.nombre);
                 const searchRutClean = cleanRut(searchTerm);
                 const studentRutClean = cleanRut(a.rut);
                 
                 const matchNombre = nombreLimpio.includes(searchLower);
-                // Si buscas 3 números o más, escanea el RUT limpio
                 const matchRut = searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean);
                 
                 return matchNombre || matchRut;
@@ -216,7 +219,7 @@
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.3...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.4...</h2>
                     </div>
                 );
             }
@@ -225,7 +228,7 @@
                 <div className="max-w-4xl mx-auto p-6 mt-8">
                     <div className="flex justify-between items-center mb-2 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Notificador U+ Global</h1>
-                        <span className="bg-green-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.3</span>
+                        <span className="bg-green-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.4 Final</span>
                     </div>
                     
                     <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
@@ -240,7 +243,7 @@
                             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
                             <input 
                                 type="text" 
-                                placeholder="Buscar por Nombre o RUT (ej: 12345678-9 o 123456789)..." 
+                                placeholder="Buscar por Nombre o RUT..." 
                                 className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -252,13 +255,10 @@
                                 {filteredAlumnos.map((a, idx) => (
                                     <div key={idx} className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`} onClick={() => setSelectedAlumno(a)}>
                                         <p className="font-semibold">{a.nombre}</p>
-                                        <p className="text-sm font-mono text-gray-600 bg-gray-200 inline-block px-2 py-0.5 rounded mt-1">RUT: {a.rut ? a.rut : 'No encontrado'}</p>
-                                        <p className="text-sm text-gray-500 mt-1">{a.asignaturas.length} asignaturas registradas</p>
+                                        <p className="text-sm font-mono text-gray-600 bg-gray-200 inline-block px-2 py-0.5 rounded mt-1">RUT: {a.rut}</p>
+                                        <p className="text-sm text-gray-500 mt-1">{a.asignaturas.length} asignaturas</p>
                                     </div>
                                 ))}
-                                {filteredAlumnos.length === 0 && (
-                                    <p className="p-4 text-center text-gray-500">No se encontraron resultados para "{searchTerm}".</p>
-                                )}
                             </div>
                         )}
                     </div>
