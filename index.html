@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.4)</title>
+    <title>Notificador Inteligente U+ (V.5)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -16,9 +16,13 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
+        // --- ICONOS ---
         const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
         const MailIcon = () => <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
+        const UploadIcon = () => <svg className="w-8 h-8 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
+        const XIcon = () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>;
 
+        // --- UTILIDADES ---
         const normalize = (str) => {
             if (!str) return "";
             return String(str).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
@@ -27,6 +31,27 @@
         const cleanRut = (rut) => {
             if (!rut) return "";
             return String(rut).replace(/[^0-9Kk]/g, "").toUpperCase();
+        };
+
+        // Inversor de nombres: PATERNO MATERNO NOMBRES -> NOMBRES PATERNO MATERNO
+        const formatName = (fullName) => {
+            if (!fullName) return '';
+            const words = fullName.trim().split(/\s+/);
+            if (words.length >= 3) {
+                const surnames = words.slice(0, 2);
+                const names = words.slice(2);
+                return [...names, ...surnames].join(' ');
+            }
+            return fullName;
+        };
+
+        // Formato de fecha y hora: YYYY-MM-DDTHH:MM -> DD/MM/YYYY a las HH:MM
+        const formatDateTime = (datetimeStr) => {
+            if (!datetimeStr) return '';
+            const [datePart, timePart] = datetimeStr.split('T');
+            if (!datePart || !timePart) return datetimeStr;
+            const [year, month, day] = datePart.split('-');
+            return `${day}/${month}/${year} a las ${timePart}`;
         };
 
         const fuzzyMatch = (name1, name2) => {
@@ -42,7 +67,11 @@
             return matches >= 2 && matches >= (Math.min(w1.length, w2.length) - 1);
         };
 
+        // --- COMPONENTE PRINCIPAL ---
         function App() {
+            const [activeTab, setActiveTab] = useState('docentes'); // 'docentes' o 'masivos'
+            
+            // Estados para Tab 1 (Notificador a Docentes)
             const [alumnos, setAlumnos] = useState([]);
             const [docentes, setDocentes] = useState([]);
             const [searchTerm, setSearchTerm] = useState('');
@@ -52,6 +81,13 @@
             const [motivo, setMotivo] = useState('extension');
             const [fechaLimite, setFechaLimite] = useState('');
 
+            // Estados para Tab 2 (Correos Masivos)
+            const [massDb, setMassDb] = useState([]);
+            const [massSearchTerm, setMassSearchTerm] = useState('');
+            const [selectedMass, setSelectedMass] = useState([]);
+            const [massLoaded, setMassLoaded] = useState(false);
+
+            // --- CARGA INICIAL (TAB 1) ---
             useEffect(() => {
                 const loadAllData = async () => {
                     setLoading(true);
@@ -76,7 +112,6 @@
                                 if (res.ok) {
                                     const buffer = await res.arrayBuffer();
                                     const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    // Usamos header: 1 para obtener todo como un arreglo de arreglos (una grilla pura)
                                     const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
                                     const parsed = parseUplusV4(data);
                                     allAlumnos = [...allAlumnos, ...parsed];
@@ -101,7 +136,6 @@
                 loadAllData();
             }, []);
 
-            // LÓGICA V.4 - LECTURA MATRICIAL IGNORANDO COLUMNAS VACÍAS
             const parseUplusV4 = (data) => {
                 let currentAlumno = null;
                 let parsedAlumnos = [];
@@ -109,7 +143,6 @@
                 for (let i = 0; i < data.length; i++) {
                     const row = data[i].map(v => v ? String(v).trim() : '');
                     
-                    // 1. Buscar Nombre saltando celdas en blanco hacia la derecha
                     const idxNombre = row.indexOf('Nombre del Alumno:');
                     if (idxNombre !== -1) {
                         let nombre = "";
@@ -122,7 +155,6 @@
                         }
                     }
                     
-                    // 2. Buscar RUT saltando celdas en blanco hacia la derecha
                     const idxRut = row.indexOf('Rut del Alumno:');
                     if (idxRut !== -1 && currentAlumno) {
                         let rut = "";
@@ -134,7 +166,6 @@
                         }
                     }
                     
-                    // 3. Extraer Asignaturas usando los índices estables de la grilla
                     if (currentAlumno) {
                         const asigName = row[3] || '';
                         const sec = row[5] || '';
@@ -177,6 +208,7 @@
                 return "";
             };
 
+            // --- LÓGICA DE ENVÍO DE CORREO (TAB 1) ---
             const handleMailTo = (alumno) => {
                 const correosRaw = alumno.asignaturas.map(a => getDocenteEmail(a.nombre, a.seccion, a.profesor));
                 const correosValidos = correosRaw.filter(c => c && c.includes('@'));
@@ -187,11 +219,13 @@
                     return;
                 }
 
-                let subject = `Situación académica estudiante ${alumno.nombre}`;
-                let body = `Estimados docentes,\n\nJunto con saludar, les escribo en relación a la/el estudiante ${alumno.nombre} (RUT: ${alumno.rut ? alumno.rut : 'Sin registro'}).\n\n`;
+                // Invertir el nombre para el correo
+                const nombreFormateado = formatName(alumno.nombre);
+                let subject = `Situación académica estudiante ${nombreFormateado}`;
+                let body = `Estimados docentes,\n\nJunto con saludar, les escribo en relación a la/el estudiante ${nombreFormateado} (RUT: ${alumno.rut ? alumno.rut : 'Sin registro'}).\n\n`;
                 
                 if (motivo === 'extension') {
-                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el día ${fechaLimite}` : ''}.\n\n`;
+                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el ${formatDateTime(fechaLimite)}` : ''}.\n\n`;
                 } else if (motivo === 'justificacion') {
                     body += `El motivo de este correo es informar que el estudiante ha presentado justificativo válido.\n\n`;
                 } else {
@@ -202,6 +236,57 @@
                 window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
+            // --- LÓGICA DE CORREOS MASIVOS (TAB 2) ---
+            const processMassFile = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const data = await file.arrayBuffer();
+                const wb = window.XLSX.read(data, { type: 'array' });
+                const jsonData = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+                
+                // Procesar la base buscando columnas estándar
+                const processed = jsonData.map((row, idx) => {
+                    const keys = Object.keys(row);
+                    const nameKey = keys.find(k => k.toLowerCase().includes('nombre') || k.toLowerCase().includes('alumno') || k.toLowerCase().includes('estudiante'));
+                    const emailKey = keys.find(k => k.toLowerCase().includes('correo') || k.toLowerCase().includes('email') || k.toLowerCase().includes('mail'));
+                    const rutKey = keys.find(k => k.toLowerCase().includes('rut') || k.toLowerCase().includes('identificaci'));
+                    
+                    return {
+                        id: idx,
+                        nombre: nameKey ? String(row[nameKey]).trim() : 'Sin Nombre',
+                        correo: emailKey ? String(row[emailKey]).trim() : '',
+                        rut: rutKey ? String(row[rutKey]).trim() : ''
+                    };
+                }).filter(item => item.correo && item.correo.includes('@'));
+
+                setMassDb(processed);
+                setMassLoaded(true);
+            };
+
+            const toggleMassSelection = (person) => {
+                if (selectedMass.find(p => p.id === person.id)) {
+                    setSelectedMass(selectedMass.filter(p => p.id !== person.id));
+                } else {
+                    setSelectedMass([...selectedMass, person]);
+                }
+                setMassSearchTerm(''); // Limpia el buscador para buscar a otro
+            };
+
+            const removeMassSelection = (id) => {
+                setSelectedMass(selectedMass.filter(p => p.id !== id));
+            };
+
+            const sendMassEmail = () => {
+                if (selectedMass.length === 0) return;
+                const emails = selectedMass.map(p => p.correo).join(';');
+                const subject = "Información Importante de Universidad UNIACC";
+                const body = "Estimados estudiantes,\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.";
+                
+                window.open(`mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+            };
+
+            // Filtros de Búsqueda
             const filteredAlumnos = alumnos.filter(a => {
                 if (!searchTerm) return true;
                 const searchLower = normalize(searchTerm);
@@ -209,94 +294,213 @@
                 const searchRutClean = cleanRut(searchTerm);
                 const studentRutClean = cleanRut(a.rut);
                 
-                const matchNombre = nombreLimpio.includes(searchLower);
-                const matchRut = searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean);
+                return nombreLimpio.includes(searchLower) || (searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean));
+            });
+
+            const filteredMass = massDb.filter(p => {
+                if (!massSearchTerm) return false; // Solo muestra resultados si hay texto
+                const searchLower = normalize(massSearchTerm);
+                const nombreLimpio = normalize(p.nombre);
+                const searchRutClean = cleanRut(massSearchTerm);
+                const studentRutClean = cleanRut(p.rut);
                 
-                return matchNombre || matchRut;
+                return nombreLimpio.includes(searchLower) || (searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean));
             });
 
             if (loading) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.4...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.5...</h2>
                     </div>
                 );
             }
 
             return (
                 <div className="max-w-4xl mx-auto p-6 mt-8">
-                    <div className="flex justify-between items-center mb-2 border-b-2 border-blue-500 pb-2">
-                        <h1 className="text-3xl font-bold text-blue-800">Notificador U+ Global</h1>
-                        <span className="bg-green-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.4 Final</span>
-                    </div>
-                    
-                    <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
-                        {loadStatus.map((status, idx) => (
-                            <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>{status}</span>
-                        ))}
+                    {/* ENCABEZADO Y TABS */}
+                    <div className="flex justify-between items-center mb-6 border-b-2 border-blue-500 pb-2">
+                        <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.5</span>
                     </div>
 
-                    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
-                        <h2 className="text-xl font-semibold mb-4">Buscar Estudiante ({alumnos.length} en total)</h2>
-                        <div className="relative mb-6">
-                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
-                            <input 
-                                type="text" 
-                                placeholder="Buscar por Nombre o RUT..." 
-                                className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                            />
-                        </div>
+                    <div className="flex gap-4 mb-8">
+                        <button 
+                            onClick={() => setActiveTab('docentes')}
+                            className={`flex-1 py-3 px-4 rounded-lg font-bold transition shadow ${activeTab === 'docentes' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        >
+                            👨‍🏫 Notificar a Docentes
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('masivos')}
+                            className={`flex-1 py-3 px-4 rounded-lg font-bold transition shadow ${activeTab === 'masivos' ? 'bg-purple-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        >
+                            ✉️ Correos Masivos (Estudiantes)
+                        </button>
+                    </div>
 
-                        {searchTerm.length > 0 && (
-                            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
-                                {filteredAlumnos.map((a, idx) => (
-                                    <div key={idx} className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`} onClick={() => setSelectedAlumno(a)}>
-                                        <p className="font-semibold">{a.nombre}</p>
-                                        <p className="text-sm font-mono text-gray-600 bg-gray-200 inline-block px-2 py-0.5 rounded mt-1">RUT: {a.rut}</p>
-                                        <p className="text-sm text-gray-500 mt-1">{a.asignaturas.length} asignaturas</p>
-                                    </div>
+                    {/* ================= TAB 1: DOCENTES ================= */}
+                    {activeTab === 'docentes' && (
+                        <div className="animate-fade-in">
+                            <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
+                                {loadStatus.map((status, idx) => (
+                                    <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>{status}</span>
                                 ))}
                             </div>
-                        )}
-                    </div>
 
-                    {selectedAlumno && (
-                        <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
-                            <h2 className="text-xl font-semibold mb-4">Configurar Correo: <span className="text-blue-700">{selectedAlumno.nombre}</span></h2>
-                            
-                            <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                <ul className="text-sm space-y-2">
-                                    {selectedAlumno.asignaturas.map((asig, i) => {
-                                        const email = getDocenteEmail(asig.nombre, asig.seccion, asig.profesor);
-                                        return (
-                                            <li key={i} className="flex justify-between border-b pb-2">
-                                                <span>{asig.nombre} (Sec. {asig.seccion})</span>
-                                                <span className={email ? "text-green-700 font-bold" : "text-red-600"}>{email || "Sin correo"}</span>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-4 mb-6">
-                                <div>
-                                    <select className="w-full border p-3 rounded-lg bg-white" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-                                        <option value="extension">Extensión de Plazos</option>
-                                        <option value="justificacion">Justificación Médica</option>
-                                        <option value="libre">Mensaje Libre</option>
-                                    </select>
+                            <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
+                                <h2 className="text-xl font-semibold mb-4">Buscar Estudiante ({alumnos.length} en total)</h2>
+                                <div className="relative mb-6">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
+                                    <input 
+                                        type="text" 
+                                        placeholder="Buscar por Nombre o RUT..." 
+                                        className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm"
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                    />
                                 </div>
-                                {motivo === 'extension' && (
-                                    <input type="date" className="w-full border p-3 rounded-lg" value={fechaLimite} onChange={(e) => setFechaLimite(e.target.value)} />
+
+                                {searchTerm.length > 0 && (
+                                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
+                                        {filteredAlumnos.map((a, idx) => (
+                                            <div key={idx} className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`} onClick={() => setSelectedAlumno(a)}>
+                                                <p className="font-semibold">{a.nombre} <span className="text-xs text-gray-400 font-normal ml-2">(Se invertirá al redactar)</span></p>
+                                                <p className="text-sm font-mono text-gray-600 bg-gray-200 inline-block px-2 py-0.5 rounded mt-1">RUT: {a.rut}</p>
+                                                <p className="text-sm text-gray-500 mt-1">{a.asignaturas.length} asignaturas</p>
+                                            </div>
+                                        ))}
+                                    </div>
                                 )}
                             </div>
 
-                            <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold py-3 rounded-lg flex justify-center gap-2">
-                                <MailIcon /> Redactar Correo
-                            </button>
+                            {selectedAlumno && (
+                                <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
+                                    <h2 className="text-xl font-semibold mb-4">Configurar Correo: <span className="text-blue-700">{formatName(selectedAlumno.nombre)}</span></h2>
+                                    
+                                    <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                        <ul className="text-sm space-y-2">
+                                            {selectedAlumno.asignaturas.map((asig, i) => {
+                                                const email = getDocenteEmail(asig.nombre, asig.seccion, asig.profesor);
+                                                return (
+                                                    <li key={i} className="flex justify-between border-b pb-2">
+                                                        <span>{asig.nombre} (Sec. {asig.seccion})</span>
+                                                        <span className={email ? "text-green-700 font-bold" : "text-red-600"}>{email || "Sin correo"}</span>
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 mb-6">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Motivo del Correo</label>
+                                            <select className="w-full border p-3 rounded-lg bg-white" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+                                                <option value="extension">Extensión de Plazos</option>
+                                                <option value="justificacion">Justificación Médica</option>
+                                                <option value="libre">Mensaje Libre</option>
+                                            </select>
+                                        </div>
+                                        {motivo === 'extension' && (
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha y Hora Límite</label>
+                                                <input type="datetime-local" className="w-full border p-3 rounded-lg" value={fechaLimite} onChange={(e) => setFechaLimite(e.target.value)} />
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold py-3 rounded-lg flex justify-center gap-2">
+                                        <MailIcon /> Redactar Correo
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ================= TAB 2: MASIVOS ================= */}
+                    {activeTab === 'masivos' && (
+                        <div className="animate-fade-in">
+                            {!massLoaded ? (
+                                <div className="bg-white p-8 rounded-lg shadow-md border-t-4 border-purple-500 text-center">
+                                    <h2 className="text-xl font-semibold mb-4 text-gray-700">Cargar Base de Estudiantes para Masivos</h2>
+                                    <div className="border-2 border-dashed border-purple-300 rounded-lg p-8 bg-purple-50 hover:bg-purple-100 transition relative cursor-pointer">
+                                        <input type="file" accept=".xlsx, .xls" onChange={processMassFile} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                        <UploadIcon />
+                                        <p className="mt-2 text-gray-700 font-medium">Sube tu archivo Excel aquí</p>
+                                        <p className="text-sm text-gray-500 mt-1">Debe contener una columna llamada "Nombre" y otra "Correo" o "Email".</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    
+                                    {/* Columna Izquierda: Buscador */}
+                                    <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-purple-500">
+                                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Buscar Personas</h2>
+                                        <div className="relative mb-4">
+                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Buscar y seleccionar..." 
+                                                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                value={massSearchTerm}
+                                                onChange={(e) => setMassSearchTerm(e.target.value)}
+                                            />
+                                        </div>
+                                        
+                                        {massSearchTerm.length > 0 && (
+                                            <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50 shadow-inner">
+                                                {filteredMass.map(p => {
+                                                    const isSelected = selectedMass.some(sel => sel.id === p.id);
+                                                    return (
+                                                        <div key={p.id} className="p-3 border-b flex justify-between items-center hover:bg-purple-50">
+                                                            <div>
+                                                                <p className="font-semibold text-sm">{formatName(p.nombre)}</p>
+                                                                <p className="text-xs text-gray-500">{p.correo}</p>
+                                                            </div>
+                                                            <button 
+                                                                onClick={() => toggleMassSelection(p)}
+                                                                className={`px-3 py-1 text-xs font-bold rounded-full ${isSelected ? 'bg-red-100 text-red-600' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}
+                                                            >
+                                                                {isSelected ? 'Quitar' : '+ Agregar'}
+                                                            </button>
+                                                        </div>
+                                                    )
+                                                })}
+                                                {filteredMass.length === 0 && <p className="p-4 text-center text-sm text-gray-500">No hay coincidencias.</p>}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Columna Derecha: Seleccionados */}
+                                    <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500 flex flex-col h-full">
+                                        <h2 className="text-xl font-semibold mb-4 text-gray-800">Lista de Envío ({selectedMass.length})</h2>
+                                        
+                                        <div className="flex-1 max-h-64 overflow-y-auto bg-gray-50 rounded-lg border p-2 mb-4">
+                                            {selectedMass.length === 0 ? (
+                                                <p className="text-center text-sm text-gray-400 mt-10 italic">Busca y agrega personas a la lista...</p>
+                                            ) : (
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedMass.map(p => (
+                                                        <div key={p.id} className="bg-white border border-green-300 shadow-sm rounded-full pl-3 pr-1 py-1 flex items-center gap-2">
+                                                            <span className="text-xs font-medium text-gray-700">{formatName(p.nombre)}</span>
+                                                            <button onClick={() => removeMassSelection(p.id)} className="bg-red-50 text-red-500 rounded-full p-1 hover:bg-red-100"><XIcon /></button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <button 
+                                            onClick={sendMassEmail}
+                                            disabled={selectedMass.length === 0}
+                                            className={`w-full font-bold py-3 rounded-lg flex justify-center gap-2 transition ${selectedMass.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                                        >
+                                            <MailIcon /> Crear Correo Masivo (BCC)
+                                        </button>
+                                    </div>
+
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
