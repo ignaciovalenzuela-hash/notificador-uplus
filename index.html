@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.6)</title>
+    <title>Notificador Inteligente U+ (V.7)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -17,7 +17,8 @@
         const { useState, useEffect } = React;
 
         const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
-        const MailIcon = () => <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
+        // Ajustamos el icono para que reciba clases dinámicas y pueda cambiar de color
+        const MailIcon = ({ className = "w-5 h-5 text-white" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
         const UploadIcon = () => <svg className="w-8 h-8 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
 
         const normalize = (str) => {
@@ -79,6 +80,7 @@
             const [massSearchTerm, setMassSearchTerm] = useState('');
             const [selectedMass, setSelectedMass] = useState([]);
             const [massLoaded, setMassLoaded] = useState(false);
+            const [mensajeBase, setMensajeBase] = useState("Estimado/a {nombre},\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.");
 
             useEffect(() => {
                 const loadAllData = async () => {
@@ -251,11 +253,22 @@
                 }
             };
 
+            // ENVÍO DE CORREO INDIVIDUAL (Usa la plantilla base)
+            const sendIndividualEmail = (person) => {
+                const nombreFormateado = formatName(person.nombre);
+                const subject = "Información Importante de Universidad UNIACC";
+                // Reemplazamos {nombre} por el nombre real formateado
+                const body = mensajeBase.replace(/{nombre}/g, nombreFormateado);
+                window.open(`mailto:${encodeURIComponent(person.correo)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+            };
+
+            // ENVÍO DE CORREO MASIVO (Usa la plantilla base adaptada)
             const sendMassEmail = () => {
                 if (selectedMass.length === 0) return;
                 const emails = selectedMass.map(p => p.correo).join(';');
                 const subject = "Información Importante de Universidad UNIACC";
-                const body = "Estimados estudiantes,\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.";
+                // En un masivo reemplazamos {nombre} por "estudiante" para que no quede raro
+                const body = mensajeBase.replace(/{nombre}/g, "estudiante"); 
                 window.open(`mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
@@ -283,7 +296,7 @@
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.6...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.7...</h2>
                     </div>
                 );
             }
@@ -292,7 +305,7 @@
                 <div className="max-w-5xl mx-auto p-6 mt-8">
                     <div className="flex justify-between items-center mb-6 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
-                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.6</span>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.7</span>
                     </div>
 
                     <div className="flex gap-4 mb-8">
@@ -385,10 +398,24 @@
                                 </div>
                             ) : (
                                 <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-purple-500">
+                                    
+                                    {/* CASILLA DE MENSAJE BASE */}
+                                    <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                            Plantilla Base <span className="text-purple-600 font-normal ml-2">(Escribe <b>{'{nombre}'}</b> para insertar el nombre automáticamente)</span>
+                                        </label>
+                                        <textarea 
+                                            className="w-full border border-gray-300 p-3 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                            rows="5"
+                                            value={mensajeBase}
+                                            onChange={(e) => setMensajeBase(e.target.value)}
+                                        ></textarea>
+                                    </div>
+
                                     <div className="flex justify-between items-center mb-4">
                                         <h2 className="text-xl font-semibold text-gray-800">Directorio de Estudiantes ({massDb.length})</h2>
                                         <button onClick={sendMassEmail} disabled={selectedMass.length === 0} className={`font-bold py-2 px-6 rounded-lg flex items-center gap-2 transition ${selectedMass.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
-                                            <MailIcon /> Crear Correo Masivo ({selectedMass.length})
+                                            <MailIcon /> Masivo Oculto ({selectedMass.length})
                                         </button>
                                     </div>
 
@@ -402,28 +429,38 @@
                                             <thead className="bg-gray-50 border-b border-gray-200 text-gray-700 uppercase text-xs">
                                                 <tr>
                                                     <th className="p-4 w-16">
-                                                        <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={allFilteredSelected} onChange={(e) => handleSelectAll(e, filteredMass)} />
+                                                        <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={allFilteredSelected} onChange={(e) => handleSelectAll(e, filteredMass)} title="Seleccionar todos" />
                                                     </th>
                                                     <th className="p-4">Nombre Completo</th>
                                                     <th className="p-4">RUT</th>
                                                     <th className="p-4">Correo Electrónico</th>
+                                                    <th className="p-4 text-center">Acción Individual</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {filteredMass.length > 0 ? filteredMass.map((p) => {
                                                     const isSelected = selectedMass.some(sel => sel.id === p.id);
                                                     return (
-                                                        <tr key={p.id} className={`border-b border-gray-100 hover:bg-purple-50 ${isSelected ? 'bg-purple-50' : ''}`} onClick={() => toggleMassSelection(p)}>
-                                                            <td className="p-4 cursor-pointer">
+                                                        <tr key={p.id} className={`border-b border-gray-100 hover:bg-purple-50 ${isSelected ? 'bg-purple-50' : ''}`}>
+                                                            <td className="p-4 cursor-pointer" onClick={() => toggleMassSelection(p)}>
                                                                 <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={isSelected} readOnly />
                                                             </td>
-                                                            <td className="p-4 font-medium text-gray-900">{formatName(p.nombre)}</td>
-                                                            <td className="p-4 font-mono text-xs">{p.rut || '-'}</td>
-                                                            <td className="p-4 text-blue-600">{p.correo}</td>
+                                                            <td className="p-4 font-medium text-gray-900 cursor-pointer" onClick={() => toggleMassSelection(p)}>{formatName(p.nombre)}</td>
+                                                            <td className="p-4 font-mono text-xs cursor-pointer" onClick={() => toggleMassSelection(p)}>{p.rut || '-'}</td>
+                                                            <td className="p-4 text-blue-600 cursor-pointer" onClick={() => toggleMassSelection(p)}>{p.correo}</td>
+                                                            <td className="p-4 text-center">
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); sendIndividualEmail(p); }}
+                                                                    className="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-full transition shadow-sm"
+                                                                    title={`Enviar correo a ${formatName(p.nombre)}`}
+                                                                >
+                                                                    <MailIcon className="w-5 h-5 text-blue-700" />
+                                                                </button>
+                                                            </td>
                                                         </tr>
                                                     );
                                                 }) : (
-                                                    <tr><td colSpan="4" className="p-8 text-center text-gray-500">No se encontraron resultados</td></tr>
+                                                    <tr><td colSpan="5" className="p-8 text-center text-gray-500">No se encontraron resultados</td></tr>
                                                 )}
                                             </tbody>
                                         </table>
