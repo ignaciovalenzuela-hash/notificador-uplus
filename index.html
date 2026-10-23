@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.7)</title>
+    <title>Notificador Inteligente U+ (V.8)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -17,7 +17,6 @@
         const { useState, useEffect } = React;
 
         const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
-        // Ajustamos el icono para que reciba clases dinámicas y pueda cambiar de color
         const MailIcon = ({ className = "w-5 h-5 text-white" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
         const UploadIcon = () => <svg className="w-8 h-8 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
 
@@ -81,6 +80,9 @@
             const [selectedMass, setSelectedMass] = useState([]);
             const [massLoaded, setMassLoaded] = useState(false);
             const [mensajeBase, setMensajeBase] = useState("Estimado/a {nombre},\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.");
+            
+            // Base de datos maestra de correos de estudiantes
+            const [dbEstudiantes, setDbEstudiantes] = useState([]);
 
             useEffect(() => {
                 const loadAllData = async () => {
@@ -88,14 +90,43 @@
                     let allAlumnos = [];
                     let statusLogs = [];
                     try {
+                        // 1. Cargar Docentes
                         const resDoc = await fetch('./docentes.xlsx');
                         if (resDoc.ok) {
                             const bufferDoc = await resDoc.arrayBuffer();
                             const wbDoc = window.XLSX.read(bufferDoc, { type: 'array' });
                             const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
                             setDocentes(dataDoc);
-                            statusLogs.push(`✅ Docentes cargados (${dataDoc.length} registros)`);
+                            statusLogs.push(`✅ Docentes cargados (${dataDoc.length} reg.)`);
                         }
+
+                        // 2. Cargar Base Maestra de Correos de Estudiantes
+                        let resEst = await fetch('./estudiantes correos.xlsx');
+                        if (!resEst.ok) resEst = await fetch('./estudiantes_correos.xlsx'); // Respaldo por si hay problemas con el espacio
+                        if (resEst.ok) {
+                            const bufferEst = await resEst.arrayBuffer();
+                            const wbEst = window.XLSX.read(bufferEst, { type: 'array' });
+                            const dataEst = window.XLSX.utils.sheet_to_json(wbEst.Sheets[wbEst.SheetNames[0]], { defval: "" });
+                            
+                            // Normalizamos las claves para búsquedas rápidas
+                            const dbE = dataEst.map(row => {
+                                const keys = Object.keys(row);
+                                const nameKey = keys.find(k => k.toLowerCase().includes('nombre') || k.toLowerCase().includes('alumno') || k.toLowerCase().includes('estudiante'));
+                                const emailKey = keys.find(k => k.toLowerCase().includes('correo') || k.toLowerCase().includes('email') || k.toLowerCase().includes('mail'));
+                                const rutKey = keys.find(k => k.toLowerCase().includes('rut') || k.toLowerCase().includes('identificaci'));
+                                return {
+                                    nombre: nameKey ? String(row[nameKey]).trim() : '',
+                                    correo: emailKey ? String(row[emailKey]).trim() : '',
+                                    rut: rutKey ? String(row[rutKey]).trim() : ''
+                                };
+                            }).filter(item => item.correo && item.correo.includes('@'));
+                            setDbEstudiantes(dbE);
+                            statusLogs.push(`✅ Directorio Correos Estudiantes (${dbE.length} reg.)`);
+                        } else {
+                            statusLogs.push(`⚠️ No se encontró 'estudiantes correos.xlsx'`);
+                        }
+
+                        // 3. Cargar Sábanas U+
                         const modalidades = ['diurno.xlsx', 'vespertino.xlsx', 'semipresencial.xlsx'];
                         for (const file of modalidades) {
                             try {
@@ -213,18 +244,53 @@
                 const wb = window.XLSX.read(data, { type: 'array' });
                 const jsonData = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
                 
+                let foundEmails = 0;
+                let autoCompletedEmails = 0;
+
                 const processed = jsonData.map((row, idx) => {
                     const keys = Object.keys(row);
                     const nameKey = keys.find(k => k.toLowerCase().includes('nombre') || k.toLowerCase().includes('alumno') || k.toLowerCase().includes('estudiante'));
                     const emailKey = keys.find(k => k.toLowerCase().includes('correo') || k.toLowerCase().includes('email') || k.toLowerCase().includes('mail'));
                     const rutKey = keys.find(k => k.toLowerCase().includes('rut') || k.toLowerCase().includes('identificaci'));
+                    
+                    let nombreValue = nameKey ? String(row[nameKey]).trim() : 'Sin Nombre';
+                    let rutValue = rutKey ? String(row[rutKey]).trim() : '';
+                    let finalEmail = emailKey ? String(row[emailKey]).trim() : '';
+
+                    // Si NO hay correo en el Excel que se subió, buscamos en la base maestra de GitHub
+                    if (!finalEmail || !finalEmail.includes('@')) {
+                        let matched = null;
+                        const rutLimpio = cleanRut(rutValue);
+                        
+                        // 1. Intento por RUT
+                        if (rutLimpio.length >= 3) {
+                            matched = dbEstudiantes.find(dbItem => cleanRut(dbItem.rut) === rutLimpio);
+                        }
+                        
+                        // 2. Intento por Nombre
+                        if (!matched && nombreValue !== 'Sin Nombre') {
+                            matched = dbEstudiantes.find(dbItem => fuzzyMatch(nombreValue, dbItem.nombre));
+                        }
+
+                        if (matched && matched.correo) {
+                            finalEmail = matched.correo;
+                            autoCompletedEmails++;
+                        }
+                    } else {
+                        foundEmails++;
+                    }
+
                     return {
                         id: idx,
-                        nombre: nameKey ? String(row[nameKey]).trim() : 'Sin Nombre',
-                        correo: emailKey ? String(row[emailKey]).trim() : '',
-                        rut: rutKey ? String(row[rutKey]).trim() : ''
+                        nombre: nombreValue,
+                        correo: finalEmail,
+                        rut: rutValue
                     };
-                }).filter(item => item.correo && item.correo.includes('@'));
+                }).filter(item => item.correo && item.correo.includes('@')); // Solo conservar los que finalmente tienen correo
+
+                if (autoCompletedEmails > 0) {
+                    alert(`¡Éxito! El sistema autocompletó los correos de ${autoCompletedEmails} estudiantes cruzándolos con la base de datos maestra.`);
+                }
 
                 setMassDb(processed);
                 setMassLoaded(true);
@@ -253,21 +319,17 @@
                 }
             };
 
-            // ENVÍO DE CORREO INDIVIDUAL (Usa la plantilla base)
             const sendIndividualEmail = (person) => {
                 const nombreFormateado = formatName(person.nombre);
                 const subject = "Información Importante de Universidad UNIACC";
-                // Reemplazamos {nombre} por el nombre real formateado
                 const body = mensajeBase.replace(/{nombre}/g, nombreFormateado);
                 window.open(`mailto:${encodeURIComponent(person.correo)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
-            // ENVÍO DE CORREO MASIVO (Usa la plantilla base adaptada)
             const sendMassEmail = () => {
                 if (selectedMass.length === 0) return;
                 const emails = selectedMass.map(p => p.correo).join(';');
                 const subject = "Información Importante de Universidad UNIACC";
-                // En un masivo reemplazamos {nombre} por "estudiante" para que no quede raro
                 const body = mensajeBase.replace(/{nombre}/g, "estudiante"); 
                 window.open(`mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
@@ -296,7 +358,8 @@
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.7...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.8...</h2>
+                        <p className="text-gray-500 mt-2 text-sm">Sincronizando bases maestras</p>
                     </div>
                 );
             }
@@ -305,7 +368,7 @@
                 <div className="max-w-5xl mx-auto p-6 mt-8">
                     <div className="flex justify-between items-center mb-6 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
-                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.7</span>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.8</span>
                     </div>
 
                     <div className="flex gap-4 mb-8">
@@ -388,12 +451,14 @@
                         <div className="animate-fade-in">
                             {!massLoaded ? (
                                 <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md border-t-4 border-purple-500 text-center">
-                                    <h2 className="text-xl font-semibold mb-4 text-gray-700">Cargar Base de Estudiantes para Masivos</h2>
+                                    <h2 className="text-xl font-semibold mb-4 text-gray-700">Cargar Base de Estudiantes</h2>
                                     <div className="border-2 border-dashed border-purple-300 rounded-lg p-8 bg-purple-50 hover:bg-purple-100 transition relative cursor-pointer">
                                         <input type="file" accept=".xlsx, .xls" onChange={processMassFile} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                                         <UploadIcon />
                                         <p className="mt-2 text-gray-700 font-medium">Sube tu archivo Excel aquí</p>
-                                        <p className="text-sm text-gray-500 mt-1">Debe contener una columna "Nombre" y otra "Correo" o "Email".</p>
+                                        <p className="text-sm text-gray-500 mt-2">
+                                            Si el archivo no trae columna de correos, el sistema usará los Nombres o RUTs para extraer los correos de la base maestra automáticamente.
+                                        </p>
                                     </div>
                                 </div>
                             ) : (
