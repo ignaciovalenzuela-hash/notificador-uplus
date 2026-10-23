@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.8)</title>
+    <title>Notificador Inteligente U+ (V.8.2)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -41,14 +41,6 @@
             return fullName;
         };
 
-        const formatDateTime = (datetimeStr) => {
-            if (!datetimeStr) return '';
-            const [datePart, timePart] = datetimeStr.split('T');
-            if (!datePart || !timePart) return datetimeStr;
-            const [year, month, day] = datePart.split('-');
-            return `${day}/${month}/${year} a las ${timePart}`;
-        };
-
         const fuzzyMatch = (name1, name2) => {
             const n1 = normalize(name1).replace(/[^A-Z\s]/g, "");
             const n2 = normalize(name2).replace(/[^A-Z\s]/g, "");
@@ -61,8 +53,15 @@
             return matches >= 2 && matches >= (Math.min(w1.length, w2.length) - 1);
         };
 
+        const findKey = (keys, keywords) => {
+            return keys.find(k => {
+                const normK = normalize(k);
+                return keywords.some(kw => normK.includes(kw));
+            });
+        };
+
         function App() {
-            const [activeTab, setActiveTab] = useState('docentes');
+            const [activeTab, setActiveTab] = useState('masivos');
             
             // Tab 1 (Notificador a Docentes)
             const [alumnos, setAlumnos] = useState([]);
@@ -71,9 +70,7 @@
             const [selectedAlumno, setSelectedAlumno] = useState(null);
             const [loading, setLoading] = useState(true);
             const [loadStatus, setLoadStatus] = useState([]);
-            const [motivo, setMotivo] = useState('extension');
-            const [fechaLimite, setFechaLimite] = useState('');
-
+            
             // Tab 2 (Correos Masivos)
             const [massDb, setMassDb] = useState([]);
             const [massSearchTerm, setMassSearchTerm] = useState('');
@@ -81,8 +78,36 @@
             const [massLoaded, setMassLoaded] = useState(false);
             const [mensajeBase, setMensajeBase] = useState("Estimado/a {nombre},\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.");
             
-            // Base de datos maestra de correos de estudiantes
+            // Base de datos maestra
             const [dbEstudiantes, setDbEstudiantes] = useState([]);
+
+            const processMasterDB = async (buffer) => {
+                const wbEst = window.XLSX.read(buffer, { type: 'array' });
+                const dataEst = window.XLSX.utils.sheet_to_json(wbEst.Sheets[wbEst.SheetNames[0]], { defval: "" });
+                
+                const dbE = dataEst.map(row => {
+                    const keys = Object.keys(row);
+                    const nameKey = findKey(keys, ['NOMBRE', 'ALUMNO', 'ESTUDIANTE']);
+                    const patKey = findKey(keys, ['APELLIDO PAT', 'PATERNO']);
+                    const matKey = findKey(keys, ['APELLIDO MAT', 'MATERNO']);
+                    const emailKey = findKey(keys, ['MAIL INST', 'CORREO', 'EMAIL', 'MAIL']);
+                    const rutKey = findKey(keys, ['RUT', 'IDENTIFICACI', 'CEDULA']);
+                    
+                    // Ensamblar nombre completo si vienen los apellidos separados
+                    let nombreCompleto = nameKey ? String(row[nameKey]).trim() : '';
+                    if (patKey) nombreCompleto += ' ' + String(row[patKey]).trim();
+                    if (matKey) nombreCompleto += ' ' + String(row[matKey]).trim();
+                    nombreCompleto = nombreCompleto.replace(/\s+/g, ' ').trim(); // Limpiar espacios dobles
+
+                    return {
+                        nombre: nombreCompleto,
+                        correo: emailKey ? String(row[emailKey]).trim() : '',
+                        rut: rutKey ? String(row[rutKey]).trim() : ''
+                    };
+                }).filter(item => item.correo && item.correo.includes('@'));
+                setDbEstudiantes(dbE);
+                return dbE.length;
+            };
 
             useEffect(() => {
                 const loadAllData = async () => {
@@ -90,61 +115,25 @@
                     let allAlumnos = [];
                     let statusLogs = [];
                     try {
-                        // 1. Cargar Docentes
-                        const resDoc = await fetch('./docentes.xlsx');
-                        if (resDoc.ok) {
+                        const resDoc = await fetch('./docentes.xlsx').catch(() => null);
+                        if (resDoc && resDoc.ok) {
                             const bufferDoc = await resDoc.arrayBuffer();
                             const wbDoc = window.XLSX.read(bufferDoc, { type: 'array' });
-                            const dataDoc = window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" });
-                            setDocentes(dataDoc);
-                            statusLogs.push(`✅ Docentes cargados (${dataDoc.length} reg.)`);
+                            setDocentes(window.XLSX.utils.sheet_to_json(wbDoc.Sheets[wbDoc.SheetNames[0]], { defval: "" }));
+                            statusLogs.push(`✅ Docentes cargados`);
                         }
 
-                        // 2. Cargar Base Maestra de Correos de Estudiantes
-                        let resEst = await fetch('./estudiantes correos.xlsx');
-                        if (!resEst.ok) resEst = await fetch('./estudiantes_correos.xlsx'); // Respaldo por si hay problemas con el espacio
-                        if (resEst.ok) {
+                        let resEst = await fetch('./estudiantes correos.xlsx').catch(() => null);
+                        if (!resEst || !resEst.ok) resEst = await fetch('./estudiantes_correos.xlsx').catch(() => null);
+                        
+                        if (resEst && resEst.ok) {
                             const bufferEst = await resEst.arrayBuffer();
-                            const wbEst = window.XLSX.read(bufferEst, { type: 'array' });
-                            const dataEst = window.XLSX.utils.sheet_to_json(wbEst.Sheets[wbEst.SheetNames[0]], { defval: "" });
-                            
-                            // Normalizamos las claves para búsquedas rápidas
-                            const dbE = dataEst.map(row => {
-                                const keys = Object.keys(row);
-                                const nameKey = keys.find(k => k.toLowerCase().includes('nombre') || k.toLowerCase().includes('alumno') || k.toLowerCase().includes('estudiante'));
-                                const emailKey = keys.find(k => k.toLowerCase().includes('correo') || k.toLowerCase().includes('email') || k.toLowerCase().includes('mail'));
-                                const rutKey = keys.find(k => k.toLowerCase().includes('rut') || k.toLowerCase().includes('identificaci'));
-                                return {
-                                    nombre: nameKey ? String(row[nameKey]).trim() : '',
-                                    correo: emailKey ? String(row[emailKey]).trim() : '',
-                                    rut: rutKey ? String(row[rutKey]).trim() : ''
-                                };
-                            }).filter(item => item.correo && item.correo.includes('@'));
-                            setDbEstudiantes(dbE);
-                            statusLogs.push(`✅ Directorio Correos Estudiantes (${dbE.length} reg.)`);
+                            const count = await processMasterDB(bufferEst);
+                            statusLogs.push(`✅ Directorio Correos (${count} reg.)`);
                         } else {
-                            statusLogs.push(`⚠️ No se encontró 'estudiantes correos.xlsx'`);
+                            statusLogs.push(`⚠️ No se pudo cargar 'estudiantes correos.xlsx' (súbelo manualmente)`);
                         }
 
-                        // 3. Cargar Sábanas U+
-                        const modalidades = ['diurno.xlsx', 'vespertino.xlsx', 'semipresencial.xlsx'];
-                        for (const file of modalidades) {
-                            try {
-                                const res = await fetch(`./${file}`);
-                                if (res.ok) {
-                                    const buffer = await res.arrayBuffer();
-                                    const wb = window.XLSX.read(buffer, { type: 'array' });
-                                    const data = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
-                                    const parsed = parseUplusV4(data);
-                                    allAlumnos = [...allAlumnos, ...parsed];
-                                    statusLogs.push(`✅ ${file} cargado (${parsed.length} alumnos)`);
-                                } else {
-                                    statusLogs.push(`⚠️ ${file} no encontrado`);
-                                }
-                            } catch (e) {
-                                statusLogs.push(`❌ Error leyendo ${file}`);
-                            }
-                        }
                         setAlumnos(allAlumnos);
                         setLoadStatus(statusLogs);
                     } catch (err) {
@@ -156,85 +145,12 @@
                 loadAllData();
             }, []);
 
-            const parseUplusV4 = (data) => {
-                let currentAlumno = null;
-                let parsedAlumnos = [];
-                for (let i = 0; i < data.length; i++) {
-                    const row = data[i].map(v => v ? String(v).trim() : '');
-                    const idxNombre = row.indexOf('Nombre del Alumno:');
-                    if (idxNombre !== -1) {
-                        let nombre = "";
-                        for (let j = idxNombre + 1; j < row.length; j++) {
-                            if (row[j]) { nombre = row[j]; break; }
-                        }
-                        if (nombre) {
-                            currentAlumno = { nombre: nombre, rut: '', asignaturas: [] };
-                            parsedAlumnos.push(currentAlumno);
-                        }
-                    }
-                    const idxRut = row.indexOf('Rut del Alumno:');
-                    if (idxRut !== -1 && currentAlumno) {
-                        let rut = "";
-                        for (let j = idxRut + 1; j < row.length; j++) {
-                            if (row[j]) { rut = row[j]; break; }
-                        }
-                        if (rut) { currentAlumno.rut = rut; }
-                    }
-                    if (currentAlumno) {
-                        const asigName = row[3] || '';
-                        const sec = row[5] || '';
-                        const prof = row[7] || '';
-                        if (asigName && asigName !== 'Nombre Ramo' && asigName !== 'CARGA ACADÉMICA DEFINITIVA' && !asigName.includes('Año:')) {
-                            if (sec && !isNaN(parseInt(sec))) {
-                                currentAlumno.asignaturas.push({ nombre: asigName, seccion: sec, profesor: prof });
-                            }
-                        }
-                    }
-                }
-                return parsedAlumnos;
-            };
-
-            const getDocenteEmail = (ramo, seccion, profesor) => {
-                const ramoClean = normalize(ramo);
-                const secClean = normalize(seccion);
-                for (let doc of docentes) {
-                    const docSubj = normalize(doc['Nombre'] || doc['Asignatura']);
-                    const docSec = normalize(doc['Codsecc'] || doc['Sección']);
-                    if (docSubj === ramoClean && docSec === secClean) {
-                        return doc['CORREO INSTITUCIONAL'] || doc['Correo'] || "";
-                    }
-                }
-                if (profesor && profesor !== 'Profesor') {
-                    for (let doc of docentes) {
-                        const docName = doc['NombreProfe'] || doc['Profesor'];
-                        if (docName && fuzzyMatch(profesor, docName)) {
-                            return doc['CORREO INSTITUCIONAL'] || doc['Correo'] || "";
-                        }
-                    }
-                }
-                return "";
-            };
-
-            const handleMailTo = (alumno) => {
-                const correosRaw = alumno.asignaturas.map(a => getDocenteEmail(a.nombre, a.seccion, a.profesor));
-                const correosValidos = correosRaw.filter(c => c && c.includes('@'));
-                const unicos = [...new Set(correosValidos)].join(';');
-                if (!unicos) {
-                    alert("No se encontraron correos para abrir Outlook.");
-                    return;
-                }
-                const nombreFormateado = formatName(alumno.nombre);
-                let subject = `Situación académica estudiante ${nombreFormateado}`;
-                let body = `Estimados docentes,\n\nJunto con saludar, les escribo en relación a la/el estudiante ${nombreFormateado} (RUT: ${alumno.rut ? alumno.rut : 'Sin registro'}).\n\n`;
-                if (motivo === 'extension') {
-                    body += `El motivo de este correo es solicitar una extensión de plazo para sus evaluaciones${fechaLimite ? ` hasta el ${formatDateTime(fechaLimite)}` : ''}.\n\n`;
-                } else if (motivo === 'justificacion') {
-                    body += `El motivo de este correo es informar que el estudiante ha presentado justificativo válido.\n\n`;
-                } else {
-                    body += `[Escriba su mensaje aquí]\n\n`;
-                }
-                body += `Saludos cordiales.`;
-                window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+            const handleManualMasterUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const buffer = await file.arrayBuffer();
+                const count = await processMasterDB(buffer);
+                alert(`Base maestra cargada manualmente con ${count} correos válidos.`);
             };
 
             const processMassFile = async (e) => {
@@ -242,32 +158,52 @@
                 if (!file) return;
                 const data = await file.arrayBuffer();
                 const wb = window.XLSX.read(data, { type: 'array' });
-                const jsonData = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+                
+                // Leer como matriz (array de arrays) para archivos sin encabezados
+                const rawRows = window.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: "" });
+                if(rawRows.length === 0) return;
+
+                let startIdx = 0;
+                let nameColIdx = 0;
+                let rutColIdx = -1;
+                let emailColIdx = -1;
+                
+                const firstRowStr = rawRows[0].join(" ").toUpperCase();
+                // Si la primera fila parece ser de títulos
+                if (firstRowStr.includes("NOMBRE") || firstRowStr.includes("RUT") || firstRowStr.includes("CORREO") || firstRowStr.includes("ALUMNO")) {
+                    startIdx = 1;
+                    rawRows[0].forEach((col, idx) => {
+                        const colUp = String(col).toUpperCase();
+                        if (colUp.includes("NOMBRE") || colUp.includes("ALUMNO")) nameColIdx = idx;
+                        if (colUp.includes("RUT")) rutColIdx = idx;
+                        if (colUp.includes("CORREO") || colUp.includes("MAIL") || colUp.includes("EMAIL")) emailColIdx = idx;
+                    });
+                } else {
+                    // Si no hay títulos (Ej: Evaluación intermedia.xlsx), asumimos que la col 0 es el nombre y la fila 0 ya es un dato
+                    startIdx = 0;
+                }
                 
                 let foundEmails = 0;
                 let autoCompletedEmails = 0;
+                let failedEmails = 0;
+                const processed = [];
 
-                const processed = jsonData.map((row, idx) => {
-                    const keys = Object.keys(row);
-                    const nameKey = keys.find(k => k.toLowerCase().includes('nombre') || k.toLowerCase().includes('alumno') || k.toLowerCase().includes('estudiante'));
-                    const emailKey = keys.find(k => k.toLowerCase().includes('correo') || k.toLowerCase().includes('email') || k.toLowerCase().includes('mail'));
-                    const rutKey = keys.find(k => k.toLowerCase().includes('rut') || k.toLowerCase().includes('identificaci'));
-                    
-                    let nombreValue = nameKey ? String(row[nameKey]).trim() : 'Sin Nombre';
-                    let rutValue = rutKey ? String(row[rutKey]).trim() : '';
-                    let finalEmail = emailKey ? String(row[emailKey]).trim() : '';
+                for(let i = startIdx; i < rawRows.length; i++) {
+                    const row = rawRows[i];
+                    if(!row || row.length === 0 || !row.join("").trim()) continue; // saltar filas en blanco
 
-                    // Si NO hay correo en el Excel que se subió, buscamos en la base maestra de GitHub
+                    let nombreValue = row[nameColIdx] ? String(row[nameColIdx]).trim() : 'Sin Nombre';
+                    let rutValue = rutColIdx !== -1 && row[rutColIdx] ? String(row[rutColIdx]).trim() : '';
+                    let finalEmail = emailColIdx !== -1 && row[emailColIdx] ? String(row[emailColIdx]).trim() : '';
+
                     if (!finalEmail || !finalEmail.includes('@')) {
                         let matched = null;
                         const rutLimpio = cleanRut(rutValue);
                         
-                        // 1. Intento por RUT
                         if (rutLimpio.length >= 3) {
                             matched = dbEstudiantes.find(dbItem => cleanRut(dbItem.rut) === rutLimpio);
                         }
                         
-                        // 2. Intento por Nombre
                         if (!matched && nombreValue !== 'Sin Nombre') {
                             matched = dbEstudiantes.find(dbItem => fuzzyMatch(nombreValue, dbItem.nombre));
                         }
@@ -275,21 +211,26 @@
                         if (matched && matched.correo) {
                             finalEmail = matched.correo;
                             autoCompletedEmails++;
+                        } else {
+                            failedEmails++;
                         }
                     } else {
                         foundEmails++;
                     }
 
-                    return {
-                        id: idx,
+                    processed.push({
+                        id: i,
                         nombre: nombreValue,
-                        correo: finalEmail,
+                        correo: finalEmail || 'SIN CORREO',
                         rut: rutValue
-                    };
-                }).filter(item => item.correo && item.correo.includes('@')); // Solo conservar los que finalmente tienen correo
+                    });
+                }
 
                 if (autoCompletedEmails > 0) {
-                    alert(`¡Éxito! El sistema autocompletó los correos de ${autoCompletedEmails} estudiantes cruzándolos con la base de datos maestra.`);
+                    alert(`✅ Éxito: Se cruzaron y rellenaron ${autoCompletedEmails} correos usando la base maestra.`);
+                }
+                if (failedEmails > 0) {
+                    alert(`⚠️ Aviso: Hubo ${failedEmails} estudiantes que no se encontraron en la base maestra o están mal escritos.`);
                 }
 
                 setMassDb(processed);
@@ -297,6 +238,7 @@
             };
 
             const toggleMassSelection = (person) => {
+                if (person.correo === 'SIN CORREO') return; 
                 if (selectedMass.find(p => p.id === person.id)) {
                     setSelectedMass(selectedMass.filter(p => p.id !== person.id));
                 } else {
@@ -308,7 +250,7 @@
                 if (e.target.checked) {
                     const newSelections = [...selectedMass];
                     filteredList.forEach(item => {
-                        if (!newSelections.find(s => s.id === item.id)) {
+                        if (item.correo !== 'SIN CORREO' && !newSelections.find(s => s.id === item.id)) {
                             newSelections.push(item);
                         }
                     });
@@ -320,6 +262,7 @@
             };
 
             const sendIndividualEmail = (person) => {
+                if(person.correo === 'SIN CORREO') return;
                 const nombreFormateado = formatName(person.nombre);
                 const subject = "Información Importante de Universidad UNIACC";
                 const body = mensajeBase.replace(/{nombre}/g, nombreFormateado);
@@ -334,15 +277,6 @@
                 window.open(`mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
             };
 
-            const filteredAlumnos = alumnos.filter(a => {
-                if (!searchTerm) return true;
-                const searchLower = normalize(searchTerm);
-                const nombreLimpio = normalize(a.nombre);
-                const searchRutClean = cleanRut(searchTerm);
-                const studentRutClean = cleanRut(a.rut);
-                return nombreLimpio.includes(searchLower) || (searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean));
-            });
-
             const filteredMass = massDb.filter(p => {
                 if (!massSearchTerm) return true; 
                 const searchLower = normalize(massSearchTerm);
@@ -352,14 +286,15 @@
                 return nombreLimpio.includes(searchLower) || (searchRutClean.length >= 3 && studentRutClean.includes(searchRutClean));
             });
 
-            const allFilteredSelected = filteredMass.length > 0 && filteredMass.every(item => selectedMass.find(s => s.id === item.id));
+            const allFilteredSelected = filteredMass.length > 0 && 
+                                        filteredMass.filter(i => i.correo !== 'SIN CORREO').length > 0 &&
+                                        filteredMass.filter(i => i.correo !== 'SIN CORREO').every(item => selectedMass.find(s => s.id === item.id));
 
             if (loading) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.8...</h2>
-                        <p className="text-gray-500 mt-2 text-sm">Sincronizando bases maestras</p>
+                        <h2 className="text-xl font-bold">Cargando datos V.8.2...</h2>
                     </div>
                 );
             }
@@ -368,7 +303,7 @@
                 <div className="max-w-5xl mx-auto p-6 mt-8">
                     <div className="flex justify-between items-center mb-6 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
-                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.8</span>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.8.2 (Cruce de Columnas Compuestas)</span>
                     </div>
 
                     <div className="flex gap-4 mb-8">
@@ -380,153 +315,72 @@
                         </button>
                     </div>
 
-                    {activeTab === 'docentes' && (
-                        <div className="animate-fade-in max-w-4xl mx-auto">
-                            <div className="bg-white p-3 rounded-lg shadow-sm mb-6 flex flex-wrap gap-4 text-xs text-gray-600">
-                                {loadStatus.map((status, idx) => (
-                                    <span key={idx} className={status.includes('❌') ? 'text-red-600' : status.includes('⚠️') ? 'text-yellow-600' : 'text-green-700'}>{status}</span>
-                                ))}
-                            </div>
-
-                            <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
-                                <h2 className="text-xl font-semibold mb-4">Buscar Estudiante ({alumnos.length} en total)</h2>
-                                <div className="relative mb-6">
-                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
-                                    <input type="text" placeholder="Buscar por Nombre o RUT..." className="w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-                                </div>
-                                {searchTerm.length > 0 && (
-                                    <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
-                                        {filteredAlumnos.map((a, idx) => (
-                                            <div key={idx} className={`p-3 border-b border-gray-200 cursor-pointer hover:bg-blue-50 ${selectedAlumno === a ? 'bg-blue-100 border-l-4 border-blue-600' : ''}`} onClick={() => setSelectedAlumno(a)}>
-                                                <p className="font-semibold">{a.nombre} <span className="text-xs text-gray-400 font-normal ml-2">(Se invertirá al redactar)</span></p>
-                                                <p className="text-sm font-mono text-gray-600 bg-gray-200 inline-block px-2 py-0.5 rounded mt-1">RUT: {a.rut}</p>
-                                                <p className="text-sm text-gray-500 mt-1">{a.asignaturas.length} asignaturas</p>
-                                            </div>
-                                        ))}
-                                    </div>
+                    {activeTab === 'masivos' && (
+                        <div className="animate-fade-in">
+                            <div className={`mb-6 p-4 rounded-lg shadow-sm border ${dbEstudiantes.length > 0 ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'}`}>
+                                <h3 className="font-bold flex items-center gap-2">
+                                    {dbEstudiantes.length > 0 ? '✅ Base Maestra Activa' : '⚠️ Base Maestra No Detectada'}
+                                </h3>
+                                <p className="text-sm text-gray-600 mt-1">
+                                    {dbEstudiantes.length > 0 
+                                        ? `El sistema ha ensamblado correctamente los nombres de ${dbEstudiantes.length} estudiantes listos para cruzar.` 
+                                        : 'El sistema no pudo cargar "estudiantes correos.xlsx" automáticamente. Súbelo manualmente aquí abajo:'}
+                                </p>
+                                {dbEstudiantes.length === 0 && (
+                                    <input type="file" accept=".xlsx, .xls" onChange={handleManualMasterUpload} className="mt-3 text-sm" />
                                 )}
                             </div>
 
-                            {selectedAlumno && (
-                                <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
-                                    <h2 className="text-xl font-semibold mb-4">Configurar Correo: <span className="text-blue-700">{formatName(selectedAlumno.nombre)}</span></h2>
-                                    <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                        <ul className="text-sm space-y-2">
-                                            {selectedAlumno.asignaturas.map((asig, i) => {
-                                                const email = getDocenteEmail(asig.nombre, asig.seccion, asig.profesor);
-                                                return (
-                                                    <li key={i} className="flex justify-between border-b pb-2">
-                                                        <span>{asig.nombre} (Sec. {asig.seccion})</span>
-                                                        <span className={email ? "text-green-700 font-bold" : "text-red-600"}>{email || "Sin correo"}</span>
-                                                    </li>
-                                                );
-                                            })}
-                                        </ul>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-4 mb-6">
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-700 mb-1">Motivo del Correo</label>
-                                            <select className="w-full border p-3 rounded-lg bg-white" value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-                                                <option value="extension">Extensión de Plazos</option>
-                                                <option value="justificacion">Justificación Médica</option>
-                                                <option value="libre">Mensaje Libre</option>
-                                            </select>
-                                        </div>
-                                        {motivo === 'extension' && (
-                                            <div>
-                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Fecha y Hora Límite</label>
-                                                <input type="datetime-local" className="w-full border p-3 rounded-lg" value={fechaLimite} onChange={(e) => setFechaLimite(e.target.value)} />
-                                            </div>
-                                        )}
-                                    </div>
-                                    <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold py-3 rounded-lg flex justify-center gap-2">
-                                        <MailIcon /> Redactar Correo
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {activeTab === 'masivos' && (
-                        <div className="animate-fade-in">
                             {!massLoaded ? (
                                 <div className="max-w-2xl mx-auto bg-white p-8 rounded-lg shadow-md border-t-4 border-purple-500 text-center">
-                                    <h2 className="text-xl font-semibold mb-4 text-gray-700">Cargar Base de Estudiantes</h2>
-                                    <div className="border-2 border-dashed border-purple-300 rounded-lg p-8 bg-purple-50 hover:bg-purple-100 transition relative cursor-pointer">
-                                        <input type="file" accept=".xlsx, .xls" onChange={processMassFile} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                    <h2 className="text-xl font-semibold mb-4 text-gray-700">1. Sube la lista de estudiantes a notificar</h2>
+                                    <div className={`border-2 border-dashed rounded-lg p-8 transition relative cursor-pointer ${dbEstudiantes.length > 0 ? 'border-purple-300 bg-purple-50 hover:bg-purple-100' : 'border-gray-300 bg-gray-50 cursor-not-allowed opacity-50'}`}>
+                                        <input type="file" accept=".xlsx, .xls" onChange={processMassFile} disabled={dbEstudiantes.length === 0} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" />
                                         <UploadIcon />
-                                        <p className="mt-2 text-gray-700 font-medium">Sube tu archivo Excel aquí</p>
-                                        <p className="text-sm text-gray-500 mt-2">
-                                            Si el archivo no trae columna de correos, el sistema usará los Nombres o RUTs para extraer los correos de la base maestra automáticamente.
-                                        </p>
+                                        <p className="mt-2 text-gray-700 font-medium">Sube tu archivo Excel (ej: Evaluación intermedia.xlsx)</p>
                                     </div>
                                 </div>
                             ) : (
                                 <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-purple-500">
-                                    
-                                    {/* CASILLA DE MENSAJE BASE */}
-                                    <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                                            Plantilla Base <span className="text-purple-600 font-normal ml-2">(Escribe <b>{'{nombre}'}</b> para insertar el nombre automáticamente)</span>
-                                        </label>
-                                        <textarea 
-                                            className="w-full border border-gray-300 p-3 rounded-lg focus:ring-purple-500 focus:border-purple-500"
-                                            rows="5"
-                                            value={mensajeBase}
-                                            onChange={(e) => setMensajeBase(e.target.value)}
-                                        ></textarea>
-                                    </div>
-
                                     <div className="flex justify-between items-center mb-4">
-                                        <h2 className="text-xl font-semibold text-gray-800">Directorio de Estudiantes ({massDb.length})</h2>
-                                        <button onClick={sendMassEmail} disabled={selectedMass.length === 0} className={`font-bold py-2 px-6 rounded-lg flex items-center gap-2 transition ${selectedMass.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
-                                            <MailIcon /> Masivo Oculto ({selectedMass.length})
-                                        </button>
+                                        <h2 className="text-xl font-semibold text-gray-800">Estudiantes a Notificar ({massDb.length})</h2>
+                                        <div className="space-x-2">
+                                            <button onClick={() => setMassLoaded(false)} className="py-2 px-4 bg-gray-200 hover:bg-gray-300 rounded-lg text-gray-700 text-sm font-bold">
+                                                Cargar otra lista
+                                            </button>
+                                            <button onClick={sendMassEmail} disabled={selectedMass.length === 0} className={`font-bold py-2 px-6 rounded-lg inline-flex items-center gap-2 transition ${selectedMass.length > 0 ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
+                                                <MailIcon /> Enviar Masivo ({selectedMass.length})
+                                            </button>
+                                        </div>
                                     </div>
 
-                                    <div className="relative mb-4">
-                                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><SearchIcon /></div>
-                                        <input type="text" placeholder="Filtrar tabla por Nombre o RUT..." className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500" value={massSearchTerm} onChange={(e) => setMassSearchTerm(e.target.value)} />
-                                    </div>
-                                    
-                                    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                                    <div className="overflow-x-auto border border-gray-200 rounded-lg mt-4">
                                         <table className="w-full text-left text-sm text-gray-600">
                                             <thead className="bg-gray-50 border-b border-gray-200 text-gray-700 uppercase text-xs">
                                                 <tr>
                                                     <th className="p-4 w-16">
-                                                        <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={allFilteredSelected} onChange={(e) => handleSelectAll(e, filteredMass)} title="Seleccionar todos" />
+                                                        <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={allFilteredSelected} onChange={(e) => handleSelectAll(e, filteredMass)} />
                                                     </th>
-                                                    <th className="p-4">Nombre Completo</th>
+                                                    <th className="p-4">Nombre Extraído</th>
                                                     <th className="p-4">RUT</th>
                                                     <th className="p-4">Correo Electrónico</th>
-                                                    <th className="p-4 text-center">Acción Individual</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {filteredMass.length > 0 ? filteredMass.map((p) => {
+                                                {filteredMass.map((p) => {
                                                     const isSelected = selectedMass.some(sel => sel.id === p.id);
+                                                    const sinCorreo = p.correo === 'SIN CORREO';
                                                     return (
-                                                        <tr key={p.id} className={`border-b border-gray-100 hover:bg-purple-50 ${isSelected ? 'bg-purple-50' : ''}`}>
-                                                            <td className="p-4 cursor-pointer" onClick={() => toggleMassSelection(p)}>
-                                                                <input type="checkbox" className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={isSelected} readOnly />
+                                                        <tr key={p.id} className={`border-b border-gray-100 ${isSelected ? 'bg-purple-50' : 'hover:bg-gray-50'} ${sinCorreo ? 'bg-red-50' : ''}`}>
+                                                            <td className="p-4">
+                                                                <input type="checkbox" disabled={sinCorreo} className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={isSelected} onChange={() => toggleMassSelection(p)} />
                                                             </td>
-                                                            <td className="p-4 font-medium text-gray-900 cursor-pointer" onClick={() => toggleMassSelection(p)}>{formatName(p.nombre)}</td>
-                                                            <td className="p-4 font-mono text-xs cursor-pointer" onClick={() => toggleMassSelection(p)}>{p.rut || '-'}</td>
-                                                            <td className="p-4 text-blue-600 cursor-pointer" onClick={() => toggleMassSelection(p)}>{p.correo}</td>
-                                                            <td className="p-4 text-center">
-                                                                <button 
-                                                                    onClick={(e) => { e.stopPropagation(); sendIndividualEmail(p); }}
-                                                                    className="bg-blue-100 hover:bg-blue-200 text-blue-700 p-2 rounded-full transition shadow-sm"
-                                                                    title={`Enviar correo a ${formatName(p.nombre)}`}
-                                                                >
-                                                                    <MailIcon className="w-5 h-5 text-blue-700" />
-                                                                </button>
-                                                            </td>
+                                                            <td className="p-4 font-medium text-gray-900">{formatName(p.nombre)}</td>
+                                                            <td className="p-4 font-mono text-xs">{p.rut || '-'}</td>
+                                                            <td className={`p-4 font-bold ${sinCorreo ? 'text-red-500' : 'text-blue-600'}`}>{p.correo}</td>
                                                         </tr>
                                                     );
-                                                }) : (
-                                                    <tr><td colSpan="5" className="p-8 text-center text-gray-500">No se encontraron resultados</td></tr>
-                                                )}
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>
