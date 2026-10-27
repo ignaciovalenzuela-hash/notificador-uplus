@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.11)</title>
+    <title>Notificador Inteligente U+ (V.12)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -30,11 +30,9 @@
             return String(rut).replace(/[^0-9Kk]/g, "").toUpperCase();
         };
 
-        // NUEVO: El formateo de nombre ahora depende del parámetro `invert`
         const formatName = (fullName, invert) => {
             if (!fullName) return '';
-            if (!invert) return fullName.trim(); // Si no se invierte, devuelve el original limpio
-            
+            if (!invert) return fullName.trim();
             const words = fullName.trim().split(/\s+/);
             if (words.length >= 3) {
                 const surnames = words.slice(0, 2);
@@ -71,9 +69,27 @@
             });
         };
 
+        // Función para construir el enlace según la plataforma
+        const buildMailLink = ({ to = '', bcc = '', cc = '', subject = '', body = '' }, plataforma) => {
+            if (plataforma === 'gmail') {
+                return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&bcc=${encodeURIComponent(bcc)}&cc=${encodeURIComponent(cc)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            } else if (plataforma === 'outlook') {
+                return `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&bcc=${encodeURIComponent(bcc)}&cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            }
+            
+            // Mailto por defecto (App de Escritorio)
+            let params = [];
+            if (bcc) params.push(`bcc=${encodeURIComponent(bcc)}`);
+            if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
+            if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+            if (body) params.push(`body=${encodeURIComponent(body)}`);
+            return `mailto:${encodeURIComponent(to)}?${params.join('&')}`;
+        };
+
         function App() {
             const [activeTab, setActiveTab] = useState('docentes');
-            const [invertirNombres, setInvertirNombres] = useState(true); // NUEVO ESTADO PARA INVERTIR NOMBRES
+            const [invertirNombres, setInvertirNombres] = useState(true);
+            const [plataformaCorreo, setPlataformaCorreo] = useState('mailto'); // NUEVO ESTADO PARA PLATAFORMA
             
             // Tab 1 (Notificador a Docentes)
             const [alumnos, setAlumnos] = useState([]);
@@ -250,7 +266,7 @@
                 const correosValidos = correosRaw.filter(c => c && c.includes('@'));
                 const unicos = [...new Set(correosValidos)].join(';');
                 if (!unicos) {
-                    alert("No se encontraron correos para abrir Outlook.");
+                    alert("No se encontraron correos para redactar el mensaje.");
                     return;
                 }
                 const nombreFormateado = formatName(alumno.nombre, invertirNombres);
@@ -264,7 +280,9 @@
                     body += `[Escriba su mensaje aquí]\n\n`;
                 }
                 body += `Saludos cordiales.`;
-                window.open(`mailto:?bcc=${encodeURIComponent(unicos)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+                
+                const link = buildMailLink({ bcc: unicos, subject: subject, body: body }, plataformaCorreo);
+                window.open(link, '_blank');
             };
 
             const handleManualMasterUpload = async (e) => {
@@ -382,11 +400,8 @@
                 const subject = "Información Importante de Universidad UNIACC";
                 const body = mensajeBase.replace(/{nombre}/g, nombreFormateado);
                 
-                let mailtoLink = `mailto:${encodeURIComponent(person.correo)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                if (ccEmails.trim() !== '') {
-                    mailtoLink += `&cc=${encodeURIComponent(ccEmails.trim())}`;
-                }
-                window.open(mailtoLink);
+                const link = buildMailLink({ to: person.correo, cc: ccEmails.trim(), subject: subject, body: body }, plataformaCorreo);
+                window.open(link, '_blank');
             };
 
             const sendMassEmail = () => {
@@ -395,11 +410,8 @@
                 const subject = "Información Importante de Universidad UNIACC";
                 const body = mensajeBase.replace(/{nombre}/g, "estudiante"); 
                 
-                let mailtoLink = `mailto:?bcc=${encodeURIComponent(emails)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                if (ccEmails.trim() !== '') {
-                    mailtoLink += `&cc=${encodeURIComponent(ccEmails.trim())}`;
-                }
-                window.open(mailtoLink);
+                const link = buildMailLink({ bcc: emails, cc: ccEmails.trim(), subject: subject, body: body }, plataformaCorreo);
+                window.open(link, '_blank');
             };
 
             const filteredAlumnos = alumnos.filter(a => {
@@ -428,16 +440,41 @@
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.11...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.12...</h2>
                     </div>
                 );
             }
 
             return (
                 <div className="max-w-5xl mx-auto p-6 mt-8">
-                    <div className="flex justify-between items-center mb-6 border-b-2 border-blue-500 pb-2">
+                    <div className="flex justify-between items-center mb-4 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
-                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.11</span>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.12</span>
+                    </div>
+
+                    {/* BARRA DE CONFIGURACIÓN GLOBAL */}
+                    <div className="bg-white p-4 rounded-lg shadow-sm mb-6 flex flex-wrap gap-6 items-center border-l-4 border-blue-500">
+                        <div>
+                            <label className="text-sm font-semibold text-gray-700 mr-2">Plataforma de envío:</label>
+                            <select 
+                                value={plataformaCorreo} 
+                                onChange={e => setPlataformaCorreo(e.target.value)} 
+                                className="border border-gray-300 rounded-lg p-2 text-sm focus:ring-blue-500 bg-gray-50"
+                            >
+                                <option value="mailto">App por Defecto (Escritorio)</option>
+                                <option value="outlook">Outlook Web (Navegador)</option>
+                                <option value="gmail">Gmail Web (Navegador)</option>
+                            </select>
+                        </div>
+                        <label className="flex items-center space-x-2 text-sm text-gray-700 font-medium">
+                            <input 
+                                type="checkbox" 
+                                checked={invertirNombres} 
+                                onChange={(e) => setInvertirNombres(e.target.checked)} 
+                                className="rounded text-blue-600 w-5 h-5 focus:ring-blue-500" 
+                            />
+                            <span>Invertir nombres en plataforma (Ej: "Perez Juan" ➔ "Juan Perez")</span>
+                        </label>
                     </div>
 
                     <div className="flex gap-4 mb-8">
@@ -480,11 +517,6 @@
                             {selectedAlumno && (
                                 <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-green-500">
                                     <h2 className="text-xl font-semibold mb-4">Configurar Correo: <span className="text-blue-700">{formatName(selectedAlumno.nombre, invertirNombres)}</span></h2>
-                                    
-                                    <label className="flex items-center space-x-2 text-sm text-gray-700 font-medium mb-4 bg-gray-50 p-2 rounded border border-gray-200 w-fit">
-                                        <input type="checkbox" checked={invertirNombres} onChange={(e) => setInvertirNombres(e.target.checked)} className="rounded text-blue-600 w-4 h-4" />
-                                        <span>Invertir nombres (Ej: "Perez Juan" ➔ "Juan Perez")</span>
-                                    </label>
 
                                     <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                                         <ul className="text-sm space-y-2">
@@ -515,7 +547,7 @@
                                             </div>
                                         )}
                                     </div>
-                                    <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold py-3 rounded-lg flex justify-center gap-2">
+                                    <button onClick={() => handleMailTo(selectedAlumno)} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white font-bold py-3 rounded-lg flex justify-center gap-2 shadow-lg">
                                         <MailIcon /> Redactar Correo
                                     </button>
                                 </div>
@@ -555,11 +587,6 @@
                             ) : (
                                 <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-purple-500">
                                     
-                                    <label className="flex items-center space-x-2 text-sm text-gray-700 font-medium mb-4 bg-purple-50 p-2 rounded border border-purple-200 w-fit">
-                                        <input type="checkbox" checked={invertirNombres} onChange={(e) => setInvertirNombres(e.target.checked)} className="rounded text-purple-600 w-4 h-4 focus:ring-purple-500" />
-                                        <span>Invertir nombres en tabla y correos (Ej: "Perez Juan" ➔ "Juan Perez")</span>
-                                    </label>
-
                                     <div className="mb-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">
                                             Plantilla Base <span className="text-purple-600 font-normal ml-2">(Escribe <b>{'{nombre}'}</b> para insertar el nombre automáticamente)</span>
