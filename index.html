@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notificador Inteligente U+ (V.12)</title>
+    <title>Notificador Inteligente U+ (V.13)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -18,6 +18,7 @@
 
         const SearchIcon = () => <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>;
         const MailIcon = ({ className = "w-5 h-5 text-white" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>;
+        const CheckIcon = ({ className = "w-5 h-5" }) => <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>;
         const UploadIcon = () => <svg className="w-8 h-8 text-green-500 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>;
 
         const normalize = (str) => {
@@ -69,7 +70,6 @@
             });
         };
 
-        // Función para construir el enlace según la plataforma
         const buildMailLink = ({ to = '', bcc = '', cc = '', subject = '', body = '' }, plataforma) => {
             if (plataforma === 'gmail') {
                 return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&bcc=${encodeURIComponent(bcc)}&cc=${encodeURIComponent(cc)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -77,7 +77,6 @@
                 return `https://outlook.office.com/mail/deeplink/compose?to=${encodeURIComponent(to)}&bcc=${encodeURIComponent(bcc)}&cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
             }
             
-            // Mailto por defecto (App de Escritorio)
             let params = [];
             if (bcc) params.push(`bcc=${encodeURIComponent(bcc)}`);
             if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
@@ -89,7 +88,7 @@
         function App() {
             const [activeTab, setActiveTab] = useState('docentes');
             const [invertirNombres, setInvertirNombres] = useState(true);
-            const [plataformaCorreo, setPlataformaCorreo] = useState('mailto'); // NUEVO ESTADO PARA PLATAFORMA
+            const [plataformaCorreo, setPlataformaCorreo] = useState('mailto');
             
             // Tab 1 (Notificador a Docentes)
             const [alumnos, setAlumnos] = useState([]);
@@ -108,6 +107,7 @@
             const [massLoaded, setMassLoaded] = useState(false);
             const [mensajeBase, setMensajeBase] = useState("Estimado/a {nombre},\n\nJunto con saludar, nos comunicamos para informar lo siguiente:\n\n[Escriba su mensaje aquí]\n\nSaludos cordiales.");
             const [ccEmails, setCcEmails] = useState("");
+            const [enviados, setEnviados] = useState(new Set()); // NUEVO: Estado para rastrear correos enviados
             
             // Base de datos maestra de estudiantes
             const [dbEstudiantes, setDbEstudiantes] = useState([]);
@@ -126,7 +126,7 @@
                     
                     let nombreCompleto = nameKey ? String(row[nameKey]).trim() : '';
                     if (patKey) nombreCompleto += ' ' + String(row[patKey]).trim();
-                    if (matKey) nombreCompleto += ' ' + String(row[matKey]).trim();
+                    if (matKey) nombreCompleto += ' ' + String(row[patKey]).trim();
                     nombreCompleto = nombreCompleto.replace(/\s+/g, ' ').trim();
 
                     return {
@@ -281,7 +281,8 @@
                 }
                 body += `Saludos cordiales.`;
                 
-                const link = buildMailLink({ bcc: unicos, subject: subject, body: body }, plataformaCorreo);
+                // MEJORA: Colocamos a los docentes en 'to' en vez de 'bcc' para evitar problemas con Outlook Web
+                const link = buildMailLink({ to: unicos, subject: subject, body: body }, plataformaCorreo);
                 window.open(link, '_blank');
             };
 
@@ -367,6 +368,7 @@
                 }
 
                 setMassDb(processed);
+                setEnviados(new Set()); // Resetea el historial de enviados al cargar nueva base
                 setMassLoaded(true);
             };
 
@@ -401,6 +403,14 @@
                 const body = mensajeBase.replace(/{nombre}/g, nombreFormateado);
                 
                 const link = buildMailLink({ to: person.correo, cc: ccEmails.trim(), subject: subject, body: body }, plataformaCorreo);
+                
+                // MEJORA: Marcamos el ID de esta persona como contactado
+                setEnviados(prev => {
+                    const nuevosEnviados = new Set(prev);
+                    nuevosEnviados.add(person.id);
+                    return nuevosEnviados;
+                });
+                
                 window.open(link, '_blank');
             };
 
@@ -411,6 +421,14 @@
                 const body = mensajeBase.replace(/{nombre}/g, "estudiante"); 
                 
                 const link = buildMailLink({ bcc: emails, cc: ccEmails.trim(), subject: subject, body: body }, plataformaCorreo);
+                
+                // Opcional: Si envías masivo, se podrían marcar todos los seleccionados como enviados
+                setEnviados(prev => {
+                    const nuevosEnviados = new Set(prev);
+                    selectedMass.forEach(p => nuevosEnviados.add(p.id));
+                    return nuevosEnviados;
+                });
+
                 window.open(link, '_blank');
             };
 
@@ -440,7 +458,7 @@
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
                         <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <h2 className="text-xl font-bold">Cargando datos V.12...</h2>
+                        <h2 className="text-xl font-bold">Cargando datos V.13...</h2>
                     </div>
                 );
             }
@@ -449,10 +467,9 @@
                 <div className="max-w-5xl mx-auto p-6 mt-8">
                     <div className="flex justify-between items-center mb-4 border-b-2 border-blue-500 pb-2">
                         <h1 className="text-3xl font-bold text-blue-800">Centro de Notificaciones U+</h1>
-                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.12</span>
+                        <span className="bg-purple-600 text-white text-sm font-bold px-3 py-1 rounded-full shadow">V.13</span>
                     </div>
 
-                    {/* BARRA DE CONFIGURACIÓN GLOBAL */}
                     <div className="bg-white p-4 rounded-lg shadow-sm mb-6 flex flex-wrap gap-6 items-center border-l-4 border-blue-500">
                         <div>
                             <label className="text-sm font-semibold text-gray-700 mr-2">Plataforma de envío:</label>
@@ -644,22 +661,28 @@
                                                 {filteredMass.map((p) => {
                                                     const isSelected = selectedMass.some(sel => sel.id === p.id);
                                                     const sinCorreo = p.correo === 'SIN CORREO';
+                                                    const isEnviado = enviados.has(p.id); // Validar si ya se envió
+
                                                     return (
-                                                        <tr key={p.id} className={`border-b border-gray-100 ${isSelected ? 'bg-purple-50' : 'hover:bg-gray-50'} ${sinCorreo ? 'bg-red-50' : ''}`}>
+                                                        <tr key={p.id} className={`border-b border-gray-100 transition-colors ${isSelected ? 'bg-purple-50' : 'hover:bg-gray-50'} ${sinCorreo ? 'bg-red-50' : ''} ${isEnviado ? 'bg-green-50' : ''}`}>
                                                             <td className="p-4">
                                                                 <input type="checkbox" disabled={sinCorreo} className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500" checked={isSelected} onChange={() => toggleMassSelection(p)} />
                                                             </td>
-                                                            <td className="p-4 font-medium text-gray-900">{formatName(p.nombre, invertirNombres)}</td>
+                                                            <td className={`p-4 font-medium ${isEnviado ? 'text-green-800' : 'text-gray-900'}`}>
+                                                                {formatName(p.nombre, invertirNombres)}
+                                                            </td>
                                                             <td className="p-4 font-mono text-xs">{p.rut || '-'}</td>
-                                                            <td className={`p-4 font-bold ${sinCorreo ? 'text-red-500' : 'text-blue-600'}`}>{p.correo}</td>
+                                                            <td className={`p-4 font-bold ${sinCorreo ? 'text-red-500' : isEnviado ? 'text-green-700' : 'text-blue-600'}`}>
+                                                                {p.correo}
+                                                            </td>
                                                             <td className="p-4 text-center">
                                                                 <button 
                                                                     disabled={sinCorreo}
                                                                     onClick={(e) => { e.stopPropagation(); sendIndividualEmail(p); }}
-                                                                    className={`p-2 rounded-full transition shadow-sm ${sinCorreo ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-blue-100 hover:bg-blue-200 text-blue-700'}`}
-                                                                    title={sinCorreo ? 'Sin correo disponible' : `Enviar correo a ${formatName(p.nombre, invertirNombres)}`}
+                                                                    className={`p-2 rounded-full transition shadow-sm ${sinCorreo ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : isEnviado ? 'bg-green-200 hover:bg-green-300 text-green-800' : 'bg-blue-100 hover:bg-blue-200 text-blue-700'}`}
+                                                                    title={sinCorreo ? 'Sin correo disponible' : isEnviado ? 'Correo ya gestionado (Reenviar)' : `Enviar correo a ${formatName(p.nombre, invertirNombres)}`}
                                                                 >
-                                                                    <MailIcon className={`w-5 h-5 ${sinCorreo ? 'text-gray-400' : 'text-blue-700'}`} />
+                                                                    {isEnviado ? <CheckIcon className="w-5 h-5 text-green-700" /> : <MailIcon className="w-5 h-5 text-blue-700" />}
                                                                 </button>
                                                             </td>
                                                         </tr>
